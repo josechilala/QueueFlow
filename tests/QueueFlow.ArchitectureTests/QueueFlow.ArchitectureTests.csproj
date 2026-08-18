@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\QueueFlow.Domain\QueueFlow.Domain.csproj" />
+    <ProjectReference Include="..\..\src\QueueFlow.Application\QueueFlow.Application.csproj" />
+    <ProjectReference Include="..\..\src\QueueFlow.Infrastructure\QueueFlow.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\QueueFlow.Api\QueueFlow.Api.csproj" />
+  </ItemGroup>
+
+</Project>
