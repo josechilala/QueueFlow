@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hasOperationalData, type DashboardSummary } from './dashboard';
 
 const emptySummary: DashboardSummary = {
+  organizationSlug: 'queueflow-local',
   activeQueues: 0,
   waiting: 0,
   completedToday: 0,

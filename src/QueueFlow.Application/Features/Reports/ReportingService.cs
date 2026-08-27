@@ -9,7 +9,7 @@ namespace QueueFlow.Application.Features.Reports;
 
 public sealed record OperationalReport(int Waiting, int Called, int InService, int Completed, int Cancelled, double AverageWaitMinutes, double AverageServiceMinutes);
 public sealed record QueueDashboardItem(Guid Id, string Name, string BranchName, string ServiceName, QueueStatus Status, int Waiting, int ActiveAttendants, int EstimatedWaitMinutes);
-public sealed record AdministrativeDashboardSummary(int ActiveQueues, int Waiting, int CompletedToday, double AverageWaitMinutes, DateTimeOffset GeneratedAt, IReadOnlyList<QueueDashboardItem> QueuesInProgress);
+public sealed record AdministrativeDashboardSummary(string OrganizationSlug, int ActiveQueues, int Waiting, int CompletedToday, double AverageWaitMinutes, DateTimeOffset GeneratedAt, IReadOnlyList<QueueDashboardItem> QueuesInProgress);
 public sealed record ReportBreakdownItem(Guid Id, string Name, int Volume);
 public sealed record DailyVolumeItem(DateOnly Date, int Volume);
 public sealed record HourlyVolumeItem(int Hour, int Volume);
@@ -21,6 +21,10 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
     public async Task<AdministrativeDashboardSummary> GetDashboardAsync(CancellationToken ct)
     {
         var now = clock.UtcNow;
+        var organizationSlug = await db.Organizations.AsNoTracking()
+            .Where(x => x.Id == currentUser.OrganizationId)
+            .Select(x => x.Slug)
+            .SingleAsync(ct);
         var startOfTodayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
         var activeQueues = await db.Queues.AsNoTracking().CountAsync(x => x.Status == QueueStatus.Open, ct);
         var waiting = await db.QueueTickets.AsNoTracking().CountAsync(x => x.Status == TicketStatus.Waiting, ct);
@@ -55,7 +59,7 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
             return new QueueDashboardItem(queue.Id, queue.Name, branchNames[queue.BranchId], service.Name, queue.Status, waitingForQueue, activeAttendants, estimate);
         }).ToList();
 
-        return new(activeQueues, waiting, completedCount, averageWait, now, queuesInProgress);
+        return new(organizationSlug, activeQueues, waiting, completedCount, averageWait, now, queuesInProgress);
     }
 
     public async Task<OperationalReport> GetAsync(DateTimeOffset from, CancellationToken ct)

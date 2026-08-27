@@ -60,6 +60,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .qr-code { flex: 0 0 260px; line-height: 0; }
 .qr-code svg { width: 100%; height: auto; }
 .public-link { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 18px; word-break: break-all; }
+.public-scheduling-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 28px; align-items: center; margin-top: 28px; padding: 24px; border: 1px solid #b7eadc; border-radius: 16px; background: linear-gradient(135deg, #effcf8, #fff); }
+.public-scheduling-card h3 { margin: 6px 0 8px; font-size: 22px; }
+.public-scheduling-card p { margin: 0 0 14px; }
+.public-scheduling-card code { display: block; padding: 12px; border-radius: 9px; background: #fff; border: 1px solid #d8e4e0; color: #075f4b; overflow-wrap: anywhere; }
+.public-scheduling-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.secondary-button { display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; padding: 13px 18px; background: #e9eef5; color: #14213d; font-weight: 700; }
+.copy-feedback { min-height: 1.2em; grid-column: 1 / -1; color: #087c60; font-size: .9rem; font-weight: 700; }
+.copy-error { color: #b42318; }
 .scheduling-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 28px; align-items: start; }
 .scheduling-grid .entity-form { margin-top: 0; max-width: none; }
 .scheduling-wide { grid-column: 1 / -1; }
@@ -71,5 +79,5 @@ tbody tr:last-child td { border-bottom: 0; }
 .appointment-details dt { color: #667085; font-size: .85rem; }
 .appointment-details dd { margin: 5px 0; font-weight: 700; }
 @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .app-shell { grid-template-columns: 1fr; } .app-shell aside { display: none; } .dashboard { padding: 24px; } .dashboard header { align-items: flex-start; } .qr-card { flex-direction: column; align-items: stretch; } .qr-code { flex-basis: auto; max-width: 260px; } .scheduling-grid, .form-columns, .compact-form { grid-template-columns: 1fr; } .scheduling-wide, .compact-form h3, .compact-form button { grid-column: 1; } }
+@media (max-width: 760px) { .app-shell { grid-template-columns: 1fr; } .app-shell aside { display: none; } .dashboard { padding: 24px; } .dashboard header { align-items: flex-start; } .qr-card { flex-direction: column; align-items: stretch; } .qr-code { flex-basis: auto; max-width: 260px; } .public-scheduling-card { grid-template-columns: 1fr; } .copy-feedback { grid-column: 1; } .scheduling-grid, .form-columns, .compact-form { grid-template-columns: 1fr; } .scheduling-wide, .compact-form h3, .compact-form button { grid-column: 1; } }
 @media (max-width: 480px) { .metric-grid { grid-template-columns: 1fr; } }

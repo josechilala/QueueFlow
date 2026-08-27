@@ -121,6 +121,7 @@ services:
       <<: *web-environment
       QUEUEFLOW_SECURE_COOKIES: "false"
       QUEUEFLOW_PUBLIC_URL: http://localhost:3000
+      QUEUEFLOW_CUSTOMER_URL: http://localhost:3001
       NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: http://localhost:3003
     ports: ["3000:3000"]
     depends_on: { api: { condition: service_healthy } }

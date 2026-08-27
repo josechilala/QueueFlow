@@ -1,4 +1,5 @@
 export type DashboardSummary = {
+  organizationSlug: string;
   activeQueues: number;
   waiting: number;
   completedToday: number;
