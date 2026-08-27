@@ -1,0 +1,4 @@
+import { cookies } from 'next/headers'; import { ACCESS_COOKIE, apiUrl } from './auth';
+export type AuditEntry = { id: string; userName: string | null; action: string; resourceType: string; resourceId: string | null; data: string | null; correlationId: string; createdAt: string };
+export type AuditPage = { items: AuditEntry[]; total: number; page: number; pageSize: number };
+export async function getAuditPage(page: number): Promise<{ status: number; data?: AuditPage }> { const token = (await cookies()).get(ACCESS_COOKIE)?.value; if (!token) return { status: 401 }; const response = await fetch(`${apiUrl}/api/v1/audit?page=${page}&pageSize=50`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }); return response.ok ? { status: 200, data: await response.json() as AuditPage } : { status: response.status }; }

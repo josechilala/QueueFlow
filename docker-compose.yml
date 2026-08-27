@@ -1,49 +1,165 @@
+x-api-environment: &api-environment
+  ASPNETCORE_ENVIRONMENT: Development
+  ConnectionStrings__QueueFlowDatabase: Host=postgres;Port=5432;Database=queueflow;Username=queueflow;Password=${POSTGRES_PASSWORD:-queueflow-local-password}
+  Authentication__JwtKey: ${AUTHENTICATION_JWT_KEY:-queueflow-local-jwt-key-change-in-production}
+  Redis__ConnectionString: redis:6379
+  Redis__UseBackplane: "true"
+  Cors__Origins__0: http://localhost:3000
+  Cors__Origins__1: http://localhost:3001
+  Cors__Origins__2: http://localhost:3002
+  Cors__Origins__3: http://localhost:3003
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+
+x-api-image: &api-image
+  image: queueflow-api:local
+  build:
+    context: .
+    dockerfile: src/QueueFlow.Api/Dockerfile
+
+x-web-environment: &web-environment
+  NODE_ENV: production
+  QUEUEFLOW_API_URL: http://api:8080
+  NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080
+
 services:
-  api:
-    build:
-      context: .
-      dockerfile: src/QueueFlow.Api/Dockerfile
-    environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_HTTP_PORTS: 8080
-      ConnectionStrings__QueueFlowDatabase: Host=postgres;Port=5432;Database=queueflow;Username=queueflow;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  admin-web:
-    build: { context: ., dockerfile: apps/admin-web/Dockerfile }
-    ports: ["3000:3000"]
-
-  customer-web:
-    build: { context: ., dockerfile: apps/customer-web/Dockerfile }
-    ports: ["3001:3000"]
-
-  display-web:
-    build: { context: ., dockerfile: apps/display-web/Dockerfile }
-    ports: ["3002:3000"]
-
-  redis:
-    image: redis:8-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes: ["queueflow-redis:/data"]
-
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: queueflow
       POSTGRES_USER: queueflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    volumes:
-      - queueflow-postgres:/var/lib/postgresql/data
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-queueflow-local-password}
+    volumes: [queueflow-postgres:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U queueflow -d queueflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [queueflow-redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes: [./observability/otel-collector.yml:/etc/otelcol/config.yml:ro]
+    ports: ["4317:4317", "4318:4318"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - queueflow-prometheus:/prometheus
+    ports: ["9090:9090"]
+    depends_on: [otel-collector, alertmanager]
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.32.1
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes: [./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro]
+    ports: ["9093:9093"]
+    restart: unless-stopped
+
+  migrate:
+    <<: *api-image
+    command: ["--migrate-only"]
+    environment: *api-environment
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    <<: *api-image
+    environment:
+      <<: *api-environment
+      ASPNETCORE_HTTP_PORTS: 8080
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "dotnet", "QueueFlow.Api.dll", "--healthcheck"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/QueueFlow.Worker/Dockerfile
+    environment: *api-environment
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    restart: unless-stopped
+
+  admin-web:
+    build:
+      context: .
+      dockerfile: apps/admin-web/Dockerfile
+      args:
+        NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080
+        NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: http://localhost:3003
+    environment:
+      <<: *web-environment
+      QUEUEFLOW_SECURE_COOKIES: "false"
+      QUEUEFLOW_PUBLIC_URL: http://localhost:3000
+      NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: http://localhost:3003
+    ports: ["3000:3000"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
+
+  customer-web:
+    build:
+      context: .
+      dockerfile: apps/customer-web/Dockerfile
+      args: { NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080 }
+    environment: *web-environment
+    ports: ["3001:3000"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
+
+  display-web:
+    build:
+      context: .
+      dockerfile: apps/display-web/Dockerfile
+      args: { NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080 }
+    environment: *web-environment
+    ports: ["3002:3000"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
+
+  attendant-web:
+    build:
+      context: .
+      dockerfile: apps/attendant-web/Dockerfile
+      args: { NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080 }
+    environment:
+      <<: *web-environment
+      QUEUEFLOW_SECURE_COOKIES: "false"
+      QUEUEFLOW_PUBLIC_URL: http://localhost:3003
+    ports: ["3003:3000"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
 
 volumes:
   queueflow-postgres:
   queueflow-redis:
+  queueflow-prometheus:

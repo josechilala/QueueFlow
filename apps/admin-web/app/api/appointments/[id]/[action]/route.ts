@@ -1,0 +1,2 @@
+import { forwardAuthenticatedJson } from '../../../../../lib/server-api-proxy';
+export async function POST(request: Request, { params }: { params: Promise<{ id: string; action: string }> }) { const value = await params; if (!['confirm', 'cancel', 'no-show', 'check-in'].includes(value.action)) return Response.json({ message: 'Ação inválida.' }, { status: 404 }); return forwardAuthenticatedJson(request, `/api/v1/appointments/${value.id}/${value.action}`, 'POST'); }

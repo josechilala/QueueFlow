@@ -1,2 +1,5 @@
-const metrics=[['Filas ativas','4'],['Aguardando','27'],['Espera média','18 min'],['Atendidos hoje','186']];
-export default function Page(){return <main><aside><h1>QueueFlow</h1><nav>Visão geral<br/>Unidades<br/>Serviços<br/>Filas<br/>Usuários<br/>Relatórios</nav></aside><section><header><div><small>OPERAÇÃO</small><h2>Bom dia, equipe</h2></div><button>+ Nova fila</button></header><div className="grid">{metrics.map(([k,v])=><article key={k}><span>{k}</span><strong>{v}</strong></article>)}</div><div className="panel"><h3>Filas em andamento</h3><p>Clínica Geral <b>12 aguardando</b></p><p>Exames <b>8 aguardando</b></p><p>Retirada <b>7 aguardando</b></p></div></section></main>}
+import { redirect } from 'next/navigation';
+
+export default function Home() {
+  redirect('/dashboard');
+}

@@ -1,0 +1,9 @@
+'use client';
+import { HubConnectionBuilder } from '@microsoft/signalr';
+import { useEffect, useState } from 'react';
+type Call = { ticketNumber: string; counterName: string | null };
+export function DisplayScreen({ publicId, queueName, branchName }: { publicId: string; queueName: string; branchName: string }) {
+  const [current, setCurrent] = useState<Call>(); const [history, setHistory] = useState<Call[]>([]); const [connected, setConnected] = useState(false);
+  useEffect(() => { const connection = new HubConnectionBuilder().withUrl(`${process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL ?? 'http://localhost:5260'}/hubs/queue`).withAutomaticReconnect().build(); const receive = (call: Call) => { setCurrent(call); setHistory(items => [call, ...items.filter(item => item.ticketNumber !== call.ticketNumber)].slice(0, 5)); }; connection.on('ticket.called', receive); connection.on('ticket.recalled', receive); connection.onreconnecting(() => setConnected(false)); connection.onreconnected(() => setConnected(true)); connection.start().then(() => connection.invoke('JoinQueueGroup', publicId)).then(() => setConnected(true)).catch(() => setConnected(false)); return () => { void connection.stop(); }; }, [publicId]);
+  return <main><header className="display-header"><b>QueueFlow · {queueName}</b><span>{branchName} <i className="connection">{connected ? '● conectado' : '○ reconectando'}</i></span></header><section className="display-grid"><article className="current-call">{current ? <><small>SENHA CHAMADA</small><h1>{current.ticketNumber}</h1><h2>{current.counterName ?? 'Aguarde o guichê'}</h2></> : <div className="waiting-call"><h2>Aguardando próxima chamada</h2></div>}</article><aside className="call-history"><h3>Últimas chamadas</h3>{history.length ? history.map(call => <p key={call.ticketNumber}><span>{call.ticketNumber}</span><b>{call.counterName}</b></p>) : <p>Nenhuma chamada ainda</p>}</aside></section></main>;
+}

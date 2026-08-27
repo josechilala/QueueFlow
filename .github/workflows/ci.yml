@@ -26,3 +26,36 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm audit --audit-level=high
+
+  staging:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: backend
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure staging secrets
+        shell: pwsh
+        env:
+          STAGING_POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          STAGING_AUTHENTICATION_JWT_KEY: ${{ secrets.STAGING_AUTHENTICATION_JWT_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:STAGING_POSTGRES_PASSWORD)) { throw 'STAGING_POSTGRES_PASSWORD is required.' }
+          if ($env:STAGING_AUTHENTICATION_JWT_KEY.Length -lt 32) { throw 'STAGING_AUTHENTICATION_JWT_KEY must have at least 32 characters.' }
+          "STAGING_POSTGRES_PASSWORD=$env:STAGING_POSTGRES_PASSWORD" | Set-Content .env.staging
+          "STAGING_AUTHENTICATION_JWT_KEY=$env:STAGING_AUTHENTICATION_JWT_KEY" | Add-Content .env.staging
+      - name: Build and start staging
+        run: docker compose --project-name queueflow-staging --env-file .env.staging --file docker-compose.yml --file docker-compose.staging.yml up --build --detach
+      - name: Run staging smoke tests
+        shell: pwsh
+        run: ./scripts/test-staging.ps1
+      - name: Run load and concurrency tests
+        run: docker compose --project-name queueflow-staging --env-file .env.staging --file docker-compose.yml --file docker-compose.staging.yml --profile load run --rm load-test
+      - name: Collect staging logs
+        if: failure()
+        run: docker compose --project-name queueflow-staging --env-file .env.staging --file docker-compose.yml --file docker-compose.staging.yml logs --no-color
+      - name: Stop staging
+        if: always()
+        run: docker compose --project-name queueflow-staging --env-file .env.staging --file docker-compose.yml --file docker-compose.staging.yml down --volumes

@@ -21,6 +21,16 @@ public sealed class LiveHealthEndpointTests : IClassFixture<QueueFlowApiFactory>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    [Fact]
+    public async Task CorrelationIdIsReturnedAndValidated()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/health/live");
+        request.Headers.Add("X-Correlation-ID", "stage-27-test");
+        using var response = await _client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal("stage-27-test", response.Headers.GetValues("X-Correlation-ID").Single());
+    }
 }
 
 public sealed class QueueFlowApiFactory : WebApplicationFactory<Program>

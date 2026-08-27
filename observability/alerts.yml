@@ -1,0 +1,51 @@
+groups:
+  - name: queueflow
+    rules:
+      - alert: QueueFlowTelemetryUnavailable
+        expr: up{job="queueflow-telemetry"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: QueueFlow telemetry is unavailable
+
+      - alert: QueueFlowHighErrorRate
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_request_duration_seconds_count[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API error rate is above 5%
+
+      - alert: QueueFlowAbnormalBacklog
+        expr: queueflow_tickets_waiting > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 100 tickets are waiting
+
+      - alert: QueueFlowNotificationFailures
+        expr: increase(queueflow_notification_failures_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Notification delivery failures detected
+
+      - alert: QueueFlowOutboxJobStale
+        expr: absent(queueflow_job_last_success_seconds{job_name="outbox"}) or time() - queueflow_job_last_success_seconds{job_name="outbox"} > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Outbox processing heartbeat is stale
+
+      - alert: QueueFlowMetricsJobStale
+        expr: time() - queueflow_job_last_success_seconds{job_name="queue_metrics"} > 180
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Queue metrics job heartbeat is stale

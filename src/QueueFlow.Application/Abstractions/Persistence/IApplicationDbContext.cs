@@ -19,5 +19,12 @@ public interface IApplicationDbContext
     DbSet<Notification> Notifications { get; }
     DbSet<Subscription> Subscriptions { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<OutboxMessage> OutboxMessages { get; }
+    DbSet<QueueMetricSnapshot> QueueMetricSnapshots { get; }
+    DbSet<Appointment> Appointments { get; }
+    DbSet<ServiceSchedule> ServiceSchedules { get; }
+    DbSet<ServiceSchedulingSettings> ServiceSchedulingSettings { get; }
+    DbSet<ScheduleBlock> ScheduleBlocks { get; }
+    DbSet<AppointmentStatusHistory> AppointmentStatusHistory { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

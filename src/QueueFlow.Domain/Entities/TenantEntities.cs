@@ -1,5 +1,6 @@
 using QueueFlow.Domain.Common;
 using QueueFlow.Domain.Enums;
+using System.Security.Cryptography;
 
 namespace QueueFlow.Domain.Entities;
 
@@ -21,25 +22,92 @@ public sealed class Organization : AuditableEntity
 public sealed class Branch : AuditableEntity, ITenantEntity
 {
     private Branch() : base(Guid.NewGuid(), DateTimeOffset.UnixEpoch) { }
-    public Branch(Guid id, Guid organizationId, string name, string timeZone, DateTimeOffset now) : base(id, now)
-    { OrganizationId = organizationId; Name = name.Trim(); TimeZone = timeZone.Trim(); if (organizationId == Guid.Empty || Name.Length == 0) throw new DomainException("Valid tenant and branch name are required."); }
+    public Branch(Guid id, Guid organizationId, string name, string timeZone, DateTimeOffset now)
+        : this(id, organizationId, name, null, timeZone, now) { }
+    public Branch(Guid id, Guid organizationId, string name, string? address, string timeZone, DateTimeOffset now) : base(id, now)
+    {
+        if (organizationId == Guid.Empty) throw new DomainException("A valid organization is required.");
+        OrganizationId = organizationId;
+        PublicId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        ApplyDetails(name, address, timeZone);
+    }
     public Guid OrganizationId { get; private set; }
+    public string PublicId { get; private set; } = string.Empty;
     public string Name { get; private set; } = string.Empty;
     public string TimeZone { get; private set; } = string.Empty;
     public string? Address { get; private set; }
     public bool IsActive { get; private set; } = true;
+
+    public void Update(string name, string? address, string timeZone, DateTimeOffset now)
+    {
+        ApplyDetails(name, address, timeZone);
+        MarkUpdated(now);
+    }
+
+    public void SetActive(bool isActive, DateTimeOffset now)
+    {
+        if (IsActive == isActive) return;
+        IsActive = isActive;
+        MarkUpdated(now);
+    }
+
+    private void ApplyDetails(string name, string? address, string timeZone)
+    {
+        Name = Required(name, "Branch name", 200);
+        TimeZone = Required(timeZone, "Time zone", 100);
+        Address = Optional(address, "Address", 500);
+    }
+
+    private static string Required(string value, string field, int maximumLength)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (normalized.Length == 0 || normalized.Length > maximumLength) throw new DomainException($"{field} must contain between 1 and {maximumLength} characters.");
+        return normalized;
+    }
+
+    private static string? Optional(string? value, string field, int maximumLength)
+    {
+        var normalized = value?.Trim();
+        if (string.IsNullOrEmpty(normalized)) return null;
+        if (normalized.Length > maximumLength) throw new DomainException($"{field} must contain at most {maximumLength} characters.");
+        return normalized;
+    }
 }
 
 public sealed class AppUser : AuditableEntity, ITenantEntity
 {
     private AppUser() : base(Guid.NewGuid(), DateTimeOffset.UnixEpoch) { }
-    public AppUser(Guid id, Guid organizationId, string name, string email, string passwordHash, DateTimeOffset now) : base(id, now)
-    { OrganizationId = organizationId; Name = name.Trim(); Email = email.Trim().ToLowerInvariant(); PasswordHash = passwordHash; }
+    public AppUser(Guid id, Guid organizationId, string name, string email, string passwordHash, UserRole role, DateTimeOffset now) : base(id, now)
+    { OrganizationId = organizationId; Name = name.Trim(); Email = email.Trim().ToLowerInvariant(); PasswordHash = passwordHash; Role = role; }
     public Guid OrganizationId { get; private set; }
     public string Name { get; private set; } = string.Empty;
     public string Email { get; private set; } = string.Empty;
     public string PasswordHash { get; private set; } = string.Empty;
+    public UserRole Role { get; private set; }
     public bool IsActive { get; private set; } = true;
+
+    public void Update(string name, UserRole role, DateTimeOffset now)
+    {
+        var normalizedName = name?.Trim() ?? string.Empty;
+        if (normalizedName.Length is < 2 or > 200) throw new DomainException("User name must contain between 2 and 200 characters.");
+        Name = normalizedName;
+        Role = role;
+        MarkUpdated(now);
+    }
+
+    public void SetActive(bool isActive, DateTimeOffset now)
+    {
+        if (IsActive == isActive) return;
+        IsActive = isActive;
+        MarkUpdated(now);
+    }
+
+    public void SetPasswordHash(string passwordHash, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(passwordHash)) throw new DomainException("Password hash is required.");
+        PasswordHash = passwordHash;
+        MarkUpdated(now);
+    }
 }
 
 public sealed class UserBranch : BaseEntity, ITenantEntity

@@ -12,6 +12,8 @@ using QueueFlow.Infrastructure.Realtime;
 using QueueFlow.Application.Abstractions.Notifications;
 using QueueFlow.Infrastructure.Notifications;
 using QueueFlow.Infrastructure.Jobs;
+using QueueFlow.Application.Abstractions.Auditing;
+using QueueFlow.Infrastructure.Auditing;
 
 namespace QueueFlow.Infrastructure;
 
@@ -25,15 +27,25 @@ public static class DependencyInjection
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<ITicketOperations, PostgresTicketOperations>();
+        services.AddScoped<IAppointmentOperations, PostgresAppointmentOperations>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, CurrentUser>();
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddSingleton<IPasswordService, PasswordService>();
         services.AddSingleton<IQueueRealtimeNotifier, SignalRQueueRealtimeNotifier>();
         services.AddScoped<INotificationSender, InAppNotificationSender>();
-        services.AddHostedService<NotificationDispatchJob>();
+        services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddSingleton<IClock, SystemClock>();
 
+        return services;
+    }
+
+    public static IServiceCollection AddApiBackgroundProcessing(this IServiceCollection services) { services.AddHostedService<OutboxProcessor>(); return services; }
+    public static IServiceCollection AddWorkerBackgroundProcessing(this IServiceCollection services) { services.AddHostedService<OutboxProcessor>(); services.AddHostedService<QueueMetricsJob>(); services.AddHostedService<ExpiredTicketJob>(); services.AddHostedService<AppointmentReminderJob>(); services.AddHostedService<AppointmentNoShowJob>(); services.AddHostedService<CleanupJob>(); return services; }
+    public static IServiceCollection AddQueueFlowRealtimeBackplane(this IServiceCollection services, IConfiguration configuration)
+    {
+        var signalR = services.AddSignalR();
+        if (configuration.GetValue("Redis:UseBackplane", false)) signalR.AddStackExchangeRedis(configuration["Redis:ConnectionString"] ?? "localhost:6379");
         return services;
     }
 }

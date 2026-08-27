@@ -1,0 +1,17 @@
+import { redirect } from 'next/navigation'; import { AdminShell } from '../../components/admin-shell'; import { getManagementReport } from '../../lib/server-reports'; import { getServerSession } from '../../lib/server-session';
+function dateValue(date: Date) { return date.toISOString().slice(0, 10); }
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const session = await getServerSession(); if (!session.user) redirect('/api/auth/refresh?returnTo=/reports'); if (!['Owner', 'Admin', 'Manager', 'Viewer'].includes(session.user.role)) return <Denied />;
+  const params = await searchParams; const now = new Date(); const from = params.from ?? dateValue(new Date(now.getTime() - 29 * 86400000)); const to = params.to ?? dateValue(now);
+  const result = await getManagementReport(from, to); if (result.status === 401) redirect(`/api/auth/refresh?returnTo=/reports?from=${from}%26to=${to}`); if (!result.data) throw new Error('Não foi possível carregar os relatórios.'); const report = result.data;
+  const metrics = [{ label: 'Atendimentos emitidos', value: report.totalTickets }, { label: 'Concluídos', value: report.completed }, { label: 'Espera média', value: `${Math.round(report.averageWaitMinutes)} min` }, { label: 'Agendamentos', value: report.appointments.total }, { label: 'Check-ins agendados', value: report.appointments.checkedIn + report.appointments.completed }, { label: 'Taxa de check-in', value: `${Math.round(report.appointments.checkInRatePercent)}%` }, { label: 'No-show agendado', value: report.appointments.noShows }, { label: 'Cancelamentos agendados', value: report.appointments.cancelled }];
+  return <AdminShell user={session.user}><div className="section-heading"><div><h3>Relatórios</h3><p className="muted">Indicadores calculados sobre atendimentos reais.</p></div></div>
+    <form className="report-filter"><label>De<input type="date" name="from" defaultValue={from} required /></label><label>Até<input type="date" name="to" defaultValue={to} required /></label><button>Aplicar período</button></form>
+    <section className="metric-grid report-metrics">{metrics.map(item => <article className="metric-card" key={item.label}><p>{item.label}</p><strong>{item.value.toLocaleString('pt-BR')}</strong></article>)}</section>
+    <ReportTable title="Volume por serviço" rows={report.byService.map(x => [x.name, x.volume])} first="Serviço" /><ReportTable title="Volume por unidade" rows={report.byBranch.map(x => [x.name, x.volume])} first="Unidade" />
+    <ReportTable title="Atendimentos por período" rows={report.byDay.map(x => [new Date(`${x.date}T00:00:00`).toLocaleDateString('pt-BR'), x.volume])} first="Data" />
+    <ReportTable title="Volume por horário local" rows={report.byHour.map(x => [`${String(x.hour).padStart(2, '0')}:00`, x.volume])} first="Horário" />
+  </AdminShell>;
+}
+function ReportTable({ title, rows, first }: { title: string; rows: [string, number][]; first: string }) { return <><div className="section-heading"><h3>{title}</h3></div><div className="table-wrap"><table><thead><tr><th>{first}</th><th>Volume</th></tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={2}>Nenhum dado no período.</td></tr> : rows.map(([name, volume]) => <tr key={name}><td>{name}</td><td>{volume.toLocaleString('pt-BR')}</td></tr>)}</tbody></table></div></>; }
+function Denied() { return <main className="centered"><section className="notice"><h1>Acesso não permitido</h1><p>Seu perfil não possui acesso aos relatórios.</p></section></main>; }

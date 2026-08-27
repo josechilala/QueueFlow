@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using QueueFlow.Application.Features.Auth;
 using QueueFlow.Application.Features.Tenants;
 
@@ -7,12 +9,14 @@ namespace QueueFlow.Api.Controllers;
 [ApiController, Route("api/v1/auth")]
 public sealed class AuthController(AuthService auth, TenantService tenants) : ControllerBase
 {
-    [HttpPost("register")]
+    [HttpPost("register"), EnableRateLimiting("auth")]
     public async Task<IActionResult> Register(CreateOrganizationCommand request, CancellationToken ct) { var result = await tenants.CreateOrganizationAsync(request, ct); return result.IsSuccess ? Created(string.Empty, result.Value) : Problem(result.Error.Description, statusCode: 400); }
-    [HttpPost("login")]
-    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Unauthorized(); }
-    [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct) { var result = await auth.RefreshAsync(request.RefreshToken, ct); return result.IsSuccess ? Ok(result.Value) : Unauthorized(); }
+    [HttpPost("login"), EnableRateLimiting("auth")]
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
+    [HttpPost("refresh"), EnableRateLimiting("auth")]
+    public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct) { var result = await auth.RefreshAsync(request.RefreshToken, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
+    [HttpGet("me"), Authorize]
+    public async Task<IActionResult> Me(CancellationToken ct) { var result = await auth.GetCurrentAsync(ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
 }
 
 public sealed record LoginRequest(string Email, string Password);

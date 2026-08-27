@@ -1,0 +1,1 @@
+{"name":"@queueflow/attendant-web","private":true,"scripts":{"dev":"next dev","start":"next start","build":"next build"},"dependencies":{"@microsoft/signalr":"^10.0.11","next":"latest","react":"latest","react-dom":"latest"},"devDependencies":{"@types/node":"latest","@types/react":"latest","@types/react-dom":"latest","typescript":"latest"}}

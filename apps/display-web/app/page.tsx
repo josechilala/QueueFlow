@@ -1,1 +1,1 @@
-export default function Page(){return <main><header><b>QueueFlow</b><span>Unidade Centro • 14:32</span></header><section><article><small>SENHA CHAMADA</small><h1>A042</h1><h2>Guichê 03</h2></article><aside><h3>Últimas chamadas</h3><p>A041 <b>Guichê 01</b></p><p>P018 <b>Sala 04</b></p><p>A040 <b>Guichê 02</b></p></aside></section></main>}
+export default function Page() { return <main className="welcome"><h1>QueueFlow Display</h1><p>Abra o painel usando o PublicId da fila:</p><code>/q/&#123;queuePublicId&#125;</code></main>; }

@@ -1,8 +1,16 @@
-FROM node:24-alpine AS build
+FROM node:24-alpine
 WORKDIR /app
+ARG NEXT_PUBLIC_QUEUEFLOW_API_URL=http://localhost:8080
+ARG NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL=http://localhost:3003
+ENV NEXT_PUBLIC_QUEUEFLOW_API_URL=$NEXT_PUBLIC_QUEUEFLOW_API_URL
+ENV NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL=$NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL
 COPY package.json package-lock.json tsconfig.json ./
 COPY apps/admin-web apps/admin-web
-RUN npm ci --workspace @queueflow/admin-web && npm run build --workspace @queueflow/admin-web
-WORKDIR /app/apps/admin-web
+RUN --mount=type=cache,target=/root/.npm npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm ci --prefer-offline --workspace @queueflow/admin-web \
+    && npm run build --workspace @queueflow/admin-web
+ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+CMD ["npm", "run", "start", "--workspace", "@queueflow/admin-web", "--", "--hostname", "0.0.0.0"]

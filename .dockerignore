@@ -1,6 +1,13 @@
 **/bin
 **/obj
+**/node_modules
+**/.next
+**/coverage
 .git
+.env
+**/.env
+appsettings.Local.json
+secrets.json
 .github
 .vs
 TestResults

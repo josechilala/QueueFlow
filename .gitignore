@@ -10,5 +10,8 @@ coverage/
 node_modules/
 **/.next/
 .env
+.env.staging
+.env.production
 appsettings.Local.json
 secrets.json
+backups/
