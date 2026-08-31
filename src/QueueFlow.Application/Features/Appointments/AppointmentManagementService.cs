@@ -10,8 +10,9 @@ using System.Text.Json;
 
 namespace QueueFlow.Application.Features.Appointments;
 
-public sealed record AppointmentListItemDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName);
-public sealed record AppointmentDetailsDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, string ConfirmationCode, string? Notes, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, Guid? QueueTicketId, IReadOnlyList<AppointmentHistoryDto> History);
+public sealed record AppointmentListItemDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, DateTimeOffset CreatedAt, string Origin);
+public sealed record AppointmentNotificationTraceDto(int Generated, int Pending, int Sent, int Failed, DateTimeOffset? LastSentAt);
+public sealed record AppointmentDetailsDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, string ConfirmationCode, string PublicToken, string? Notes, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, Guid? QueueTicketId, DateTimeOffset CreatedAt, string Origin, Guid? CreatedByUserId, string CreatedBy, AppointmentNotificationTraceDto Notifications, IReadOnlyList<AppointmentHistoryDto> History);
 public sealed record AppointmentHistoryDto(AppointmentStatus PreviousStatus, AppointmentStatus NewStatus, string? Reason, DateTimeOffset CreatedAt);
 
 public sealed class AppointmentManagementService(IApplicationDbContext db, ICurrentUser currentUser, IClock clock, IAuditWriter audit, IAppointmentOperations operations)
@@ -26,7 +27,7 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
                     join service in db.Services.AsNoTracking() on appointment.ServiceId equals service.Id
                     where (start == null || appointment.ScheduledStart >= start) && (end == null || appointment.ScheduledStart < end) && (status == null || appointment.Status == status) && (branchId == null || appointment.BranchId == branchId) && (serviceId == null || appointment.ServiceId == serviceId)
                     orderby appointment.ScheduledStart
-                    select new AppointmentListItemDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.BranchId, branch.Name, appointment.ServiceId, service.Name);
+                    select new AppointmentListItemDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.BranchId, branch.Name, appointment.ServiceId, service.Name, appointment.CreatedAt, appointment.CreatedByUserId == null ? "PublicPortal" : "AdminPanel");
         return await query.Take(500).ToListAsync(cancellationToken);
     }
 
@@ -37,7 +38,21 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
         var branchName = await db.Branches.AsNoTracking().Where(x => x.Id == appointment.BranchId).Select(x => x.Name).SingleAsync(cancellationToken);
         var serviceName = await db.Services.AsNoTracking().Where(x => x.Id == appointment.ServiceId).Select(x => x.Name).SingleAsync(cancellationToken);
         var history = await db.AppointmentStatusHistory.AsNoTracking().Where(x => x.AppointmentId == id).OrderBy(x => x.CreatedAt).Select(x => new AppointmentHistoryDto(x.PreviousStatus, x.NewStatus, x.Reason, x.CreatedAt)).ToListAsync(cancellationToken);
-        return Result.Success(new AppointmentDetailsDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.TimeZone, appointment.ConfirmationCode, appointment.Notes, appointment.BranchId, branchName, appointment.ServiceId, serviceName, appointment.QueueTicketId, history));
+        var creatorName = appointment.CreatedByUserId is Guid creatorId
+            ? await db.Users.AsNoTracking().Where(x => x.Id == creatorId).Select(x => x.Name).SingleOrDefaultAsync(cancellationToken) ?? "Usuário removido"
+            : "Cliente pelo portal público";
+        var notificationRows = await db.Notifications.AsNoTracking()
+            .Where(x => x.RecipientPublicToken == appointment.PublicToken)
+            .Select(x => new { x.Status, x.UpdatedAt })
+            .ToListAsync(cancellationToken);
+        var notifications = new AppointmentNotificationTraceDto(
+            notificationRows.Count,
+            notificationRows.Count(x => x.Status == NotificationStatus.Pending),
+            notificationRows.Count(x => x.Status == NotificationStatus.Sent),
+            notificationRows.Count(x => x.Status == NotificationStatus.Failed),
+            notificationRows.Where(x => x.Status == NotificationStatus.Sent).Max(x => x.UpdatedAt));
+        var origin = appointment.CreatedByUserId is null ? "PublicPortal" : "AdminPanel";
+        return Result.Success(new AppointmentDetailsDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.TimeZone, appointment.ConfirmationCode, appointment.PublicToken, appointment.Notes, appointment.BranchId, branchName, appointment.ServiceId, serviceName, appointment.QueueTicketId, appointment.CreatedAt, origin, appointment.CreatedByUserId, creatorName, notifications, history));
     }
 
     public Task<Result<AppointmentDetailsDto>> ConfirmAsync(Guid id, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.Confirm(now), "appointment.confirmed", null, cancellationToken);
