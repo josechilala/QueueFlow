@@ -1,1 +1,41 @@
-:root{font-family:Inter,system-ui;color:white;background:#07192c}*{box-sizing:border-box}body{margin:0}main{padding:34px}.welcome{min-height:100vh;display:grid;place-content:center;text-align:center}.welcome code{font-size:24px;color:#55e0b1}.display-header{display:flex;justify-content:space-between;font-size:24px}.display-header b{color:#55e0b1}.display-header span{color:#aebdcb;font-size:18px}.display-grid{display:grid;grid-template-columns:2fr 1fr;gap:30px;margin-top:55px}.current-call{text-align:center;background:#0f2945;border-radius:24px;padding:60px}.current-call small{color:#55e0b1}.current-call h1{font-size:clamp(80px,12vw,150px);margin:10px}.current-call h2{font-size:42px}.call-history{background:white;color:#10233f;border-radius:24px;padding:30px}.call-history p{display:flex;justify-content:space-between;padding:22px 0;border-top:1px solid #e5eaf0;font-size:24px}.waiting-call{color:#aebdcb}.connection{font-size:14px}@media(max-width:800px){.display-grid{grid-template-columns:1fr}.current-call{padding:30px}}
+:root { font-family: Inter, system-ui, sans-serif; color: white; background: #07192c; }
+html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
+main {
+  width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: clamp(12px, 2.5dvh, 30px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: clamp(12px, 2.5dvh, 28px);
+  overflow: hidden;
+}
+.welcome { grid-template-rows: 1fr; place-content: center; text-align: center; }
+.welcome code { font-size: clamp(14px, 2.5vw, 24px); color: #55e0b1; overflow-wrap: anywhere; }
+.display-header { display: flex; align-items: center; justify-content: space-between; gap: clamp(8px, 1.5dvh, 18px); min-width: 0; font-size: clamp(16px, 2.5dvh, 28px); }
+.display-header b { color: #55e0b1; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.display-header > span { color: #aebdcb; min-width: 0; flex: 1; text-align: right; font-size: clamp(14px, 2dvh, 22px); overflow-wrap: anywhere; }
+.connection { display: inline-block; font-size: clamp(11px, 1.5dvh, 16px); font-style: normal; }
+.display-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: clamp(12px, 2.5dvh, 28px); height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+.current-call, .call-history { min-width: 0; min-height: 0; height: 100%; border-radius: clamp(12px, 2.5dvh, 24px); padding: clamp(12px, 2.8dvh, 30px); }
+.current-call { text-align: center; background: #0f2945; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: clamp(8px, 2dvh, 22px); container-type: inline-size; }
+.current-call small { color: #55e0b1; font-size: clamp(13px, 2dvh, 22px); }
+.current-call h1 { font-size: clamp(32px, min(16cqw, 18dvh), 180px); line-height: 1.4; margin: 0; max-width: 100%; overflow-wrap: anywhere; }
+.current-call h2 { font-size: clamp(18px, min(6cqw, 5dvh), 52px); line-height: 1.4; margin: 0; max-width: 100%; overflow-wrap: anywhere; }
+.call-history { background: white; color: #10233f; display: flex; flex-direction: column; gap: clamp(6px, 1dvh, 12px); }
+.call-history h3 { font-size: clamp(16px, 2.5dvh, 26px); line-height: 1.4; margin: 0 0 clamp(4px, 1dvh, 12px); overflow-wrap: anywhere; }
+.call-history p { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: clamp(6px, 1dvh, 12px); padding: clamp(6px, 1.5dvh, 16px) 0; margin: 0; border-top: 1px solid #e5eaf0; font-size: clamp(15px, min(2vw, 2.7dvh), 28px); line-height: 1.4; }
+.call-history p span, .call-history p b { min-width: 0; overflow-wrap: anywhere; }
+.call-history p b { text-align: right; }
+.call-history p:nth-of-type(n+6) { display: none; }
+.waiting-call { color: #aebdcb; }
+@media (max-height: 950px) { .call-history p:nth-of-type(n+5) { display: none; } }
+@media (max-height: 800px) { .call-history p:nth-of-type(n+4) { display: none; } }
+@media (max-width: 800px) {
+  .display-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .current-call h1 { font-size: clamp(28px, min(16cqw, 10dvh), 100px); }
+  .current-call h2 { font-size: clamp(16px, 3dvh, 32px); }
+  .call-history p { padding-block: clamp(3px, .5dvh, 6px); }
+  .call-history p:nth-of-type(n+4) { display: none; }
+}
