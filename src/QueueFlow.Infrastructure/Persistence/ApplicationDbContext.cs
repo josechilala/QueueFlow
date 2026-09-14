@@ -37,10 +37,12 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         ValidateTenantWrites();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        try { return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505", ConstraintName: "UX_Queues_ActiveService" })
+        { throw new DomainException("Este serviço já possui uma fila ativa nesta unidade."); }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -83,6 +85,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         modelBuilder.Entity<QueueCounter>().Property(x => x.Name).HasMaxLength(200);
         modelBuilder.Entity<QueueFlowQueue>().Property(x => x.Name).HasMaxLength(200);
         modelBuilder.Entity<QueueFlowQueue>().HasIndex(x => x.PublicId).IsUnique();
+        modelBuilder.Entity<QueueFlowQueue>().HasIndex(x => new { x.OrganizationId, x.BranchId, x.ServiceId })
+            .HasDatabaseName("UX_Queues_ActiveService").IsUnique().HasFilter("\"IsActive\" = true");
         modelBuilder.Entity<QueueTicket>().HasIndex(x => new { x.OrganizationId, x.QueueId, x.Status, x.Priority, x.SequenceNumber });
         modelBuilder.Entity<QueueTicket>().HasIndex(x => new { x.QueueId, x.SequenceNumber }).IsUnique();
         modelBuilder.Entity<QueueTicket>().HasIndex(x => x.CustomerPublicToken).IsUnique();

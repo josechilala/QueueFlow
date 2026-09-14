@@ -15,8 +15,10 @@ internal sealed class PostgresTicketOperations(ApplicationDbContext db, IClock c
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var queue = await db.Queues.FromSqlInterpolated($"SELECT * FROM \"Queues\" WHERE \"PublicId\" = {queuePublicId} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
         if (queue is null || !queue.IsActive || queue.Status != QueueStatus.Open) return null;
-        var service = await db.Services.IgnoreQueryFilters().SingleAsync(x => x.Id == queue.ServiceId, ct);
-        if (!service.IsActive || service.AttendanceMode == ServiceAttendanceMode.AppointmentOnly) return null;
+        var service = await db.Services.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == queue.ServiceId && x.OrganizationId == queue.OrganizationId && x.BranchId == queue.BranchId, ct);
+        if (service is null || !service.IsActive || service.AttendanceMode == ServiceAttendanceMode.AppointmentOnly) return null;
+        if (!await db.Branches.IgnoreQueryFilters().AnyAsync(x => x.Id == queue.BranchId && x.OrganizationId == queue.OrganizationId && x.IsActive, ct)
+            || !await db.Organizations.AnyAsync(x => x.Id == queue.OrganizationId && x.IsActive, ct)) return null;
         if (queue.Capacity is not null)
         {
             var waitingCount = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == queue.OrganizationId && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);

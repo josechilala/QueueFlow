@@ -44,7 +44,8 @@ try {
   const service = await request('/api/v1/services', 'POST', { branchId: branch.id, name: 'Realtime Service', prefix: 'RT', averageDurationMinutes: 5 });
   const counter = await request('/api/v1/counters', 'POST', { branchId: branch.id, name: 'Realtime Counter' });
   const queue = await request('/api/v1/queues', 'POST', { branchId: branch.id, serviceId: service.id, name: 'Realtime Queue', capacity: 50 });
-  const other = await request('/api/v1/queues', 'POST', { branchId: branch.id, serviceId: service.id, name: 'Other Queue', capacity: 50 });
+  const otherService = await request('/api/v1/services', 'POST', { branchId: branch.id, name: 'Other Service', prefix: 'OT', averageDurationMinutes: 5 });
+  const other = await request('/api/v1/queues', 'POST', { branchId: branch.id, serviceId: otherService.id, name: 'Other Queue', capacity: 50 });
   await request(`/api/v1/queues/${queue.id}/open`, 'POST');
   const attendant = await connect('JoinQueueGroup', queue.publicId);
   const display = await connect('JoinQueueGroup', queue.publicId);

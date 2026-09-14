@@ -17,7 +17,8 @@ public sealed record QueueDto(Guid Id, Guid BranchId, Guid ServiceId, string Nam
 public sealed record PublicQueueDto(string PublicId, string Name, string OrganizationName, string BranchName, string ServiceName, QueueStatus Status, int WaitingCount, int ActiveAttendants, int EstimatedWaitMinutes, bool AcceptsNewTickets, IReadOnlyList<DisplayCallDto>? LatestCalls = null);
 public sealed record PublicBranchQueueDto(string PublicId, string Name, string ServiceName, QueueStatus Status, int WaitingCount, int EstimatedWaitMinutes, bool AcceptsNewTickets);
 public sealed record PublicBranchServiceDto(string PublicId, string Name, ServiceAttendanceMode AttendanceMode);
-public sealed record PublicBranchDto(string PublicId, string OrganizationName, string Name, IReadOnlyList<PublicBranchQueueDto> Queues, IReadOnlyList<PublicBranchServiceDto> AppointmentServices);
+public sealed record PublicBranchDto(string PublicId, string OrganizationName, string Name, IReadOnlyList<PublicBranchQueueDto> Queues, IReadOnlyList<PublicBranchServiceDto> AppointmentServices, IReadOnlyList<PublicBranchCatalogServiceDto> Services);
+public sealed record PublicBranchCatalogServiceDto(string PublicId, string Name, string? Description, ServiceAttendanceMode AttendanceMode, PublicBranchQueueDto? Queue, bool CanJoinQueue, bool CanSchedule);
 public sealed record PublicOrganizationServiceDto(string PublicId, string Name, string? Description, int AverageDurationMinutes, ServiceAttendanceMode AttendanceMode, string? QueuePublicId, bool CanJoinQueue, bool CanSchedule);
 public sealed record PublicOrganizationBranchDto(string PublicId, string Name, string? Address, string TimeZone, IReadOnlyList<PublicOrganizationServiceDto> Services);
 public sealed record PublicOrganizationDto(string Slug, string Name, IReadOnlyList<PublicOrganizationBranchDto> Branches);
@@ -38,9 +39,11 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
     private Guid Tenant => currentUser.OrganizationId ?? throw new UnauthorizedAccessException();
     public async Task<Result<QueueDto>> CreateAsync(Guid branchId, Guid serviceId, string name, int? capacity, CancellationToken ct)
     {
-        var catalogExists = await db.Branches.AnyAsync(x => x.Id == branchId && x.IsActive, ct)
-            && await db.Services.AnyAsync(x => x.Id == serviceId && x.BranchId == branchId && x.IsActive, ct);
+        var catalogExists = await db.Branches.AnyAsync(x => x.Id == branchId && x.OrganizationId == Tenant && x.IsActive, ct)
+            && await db.Services.AnyAsync(x => x.Id == serviceId && x.OrganizationId == Tenant && x.BranchId == branchId && x.IsActive, ct);
         if (!catalogExists) return Result.Failure<QueueDto>(new("queue.catalog_not_found", "A unidade ou o serviço não foi encontrado, está inativo ou não possui o vínculo informado."));
+        if (await db.Queues.AnyAsync(x => x.OrganizationId == Tenant && x.BranchId == branchId && x.ServiceId == serviceId && x.IsActive, ct))
+            return Result.Failure<QueueDto>(new("queue.already_active", "Este serviço já possui uma fila ativa nesta unidade."));
         var queue = new QueueFlowQueue(Guid.NewGuid(), Tenant, branchId, serviceId, name, capacity, clock.UtcNow);
         db.Queues.Add(queue); await db.SaveChangesAsync(ct); return Result.Success(Map(queue));
     }
@@ -56,11 +59,13 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var queue = await db.Queues.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.PublicId == publicId, ct);
         if (queue is null) return Result.Failure<PublicQueueDto>(new("queue.not_found", "A fila não foi encontrada."));
         var organizationName = await db.Organizations.AsNoTracking().Where(x => x.Id == queue.OrganizationId).Select(x => x.Name).SingleAsync(ct);
-        var branchName = await db.Branches.IgnoreQueryFilters().Where(x => x.Id == queue.BranchId).Select(x => x.Name).SingleAsync(ct);
-        var service = await db.Services.IgnoreQueryFilters().Where(x => x.Id == queue.ServiceId).Select(x => new { x.Name, x.AverageDurationMinutes, x.IsActive }).SingleAsync(ct);
+        var branchName = await db.Branches.IgnoreQueryFilters().Where(x => x.Id == queue.BranchId && x.OrganizationId == queue.OrganizationId && x.IsActive).Select(x => x.Name).SingleOrDefaultAsync(ct);
+        var service = await db.Services.IgnoreQueryFilters().Where(x => x.Id == queue.ServiceId && x.OrganizationId == queue.OrganizationId && x.BranchId == queue.BranchId).Select(x => new { x.Name, x.AverageDurationMinutes, x.IsActive, x.AttendanceMode }).SingleOrDefaultAsync(ct);
+        if (branchName is null || service is null || !await db.Organizations.AnyAsync(x => x.Id == queue.OrganizationId && x.IsActive, ct))
+            return Result.Failure<PublicQueueDto>(new("queue.not_found", "Queue was not found."));
         var waitingCount = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == queue.OrganizationId && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);
         var activeAttendants = await ActiveAttendantsAsync(queue.Id, ignoreQueryFilters: true, ct);
-        var acceptsNewTickets = queue.IsActive && queue.Status == QueueStatus.Open && service.IsActive && (queue.Capacity is null || waitingCount < queue.Capacity.Value);
+        var acceptsNewTickets = queue.IsActive && queue.Status == QueueStatus.Open && service.IsActive && service.AttendanceMode != ServiceAttendanceMode.AppointmentOnly && (queue.Capacity is null || waitingCount < queue.Capacity.Value);
         return Result.Success(new PublicQueueDto(queue.PublicId, queue.Name, organizationName, branchName, service.Name, queue.Status, waitingCount, activeAttendants, WaitTimeEstimator.Calculate(waitingCount, service.AverageDurationMinutes, activeAttendants), acceptsNewTickets, await GetLatestCallsAsync(queue.BranchId, queue.Id, ct)));
     }
     public async Task<Result<PublicBranchDto>> GetPublicBranchAsync(string publicId, CancellationToken ct)
@@ -68,25 +73,36 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         if (publicId.Length != 32 || !publicId.All(Uri.IsHexDigit)) return Result.Failure<PublicBranchDto>(new("branch.not_found", "A unidade não foi encontrada."));
         var branch = await db.Branches.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.PublicId == publicId && x.IsActive, ct);
         if (branch is null) return Result.Failure<PublicBranchDto>(new("branch.not_found", "A unidade não foi encontrada."));
-        var organizationName = await db.Organizations.AsNoTracking().Where(x => x.Id == branch.OrganizationId).Select(x => x.Name).SingleAsync(ct);
-        var rows = await (from queue in db.Queues.IgnoreQueryFilters().AsNoTracking()
-                          join service in db.Services.IgnoreQueryFilters().AsNoTracking() on queue.ServiceId equals service.Id
-                          where queue.BranchId == branch.Id && queue.IsActive && service.IsActive
-                          orderby service.Name, queue.Name
-                          select new { Queue = queue, ServiceName = service.Name, service.AverageDurationMinutes }).ToListAsync(ct);
-        var queues = new List<PublicBranchQueueDto>(rows.Count);
-        foreach (var row in rows)
+        var organization = await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == branch.OrganizationId && x.IsActive, ct);
+        if (organization is null) return Result.Failure<PublicBranchDto>(new("branch.not_found", "A unidade não foi encontrada."));
+        var services = await db.Services.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.IsActive).OrderBy(x => x.Name).ToListAsync(ct);
+        var ids = services.Select(x => x.Id).ToArray();
+        var queues = await db.Queues.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && ids.Contains(x.ServiceId) && x.IsActive).ToListAsync(ct);
+        var settings = await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && ids.Contains(x.ServiceId) && x.IsActive).Select(x => x.ServiceId).ToListAsync(ct);
+        var catalog = new List<PublicBranchCatalogServiceDto>();
+        foreach (var service in services)
         {
-            var waitingCount = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == branch.OrganizationId && x.QueueId == row.Queue.Id && x.Status == TicketStatus.Waiting, ct);
-            var activeAttendants = await ActiveAttendantsAsync(row.Queue.Id, ignoreQueryFilters: true, ct);
-            var acceptsNewTickets = row.Queue.Status == QueueStatus.Open && (row.Queue.Capacity is null || waitingCount < row.Queue.Capacity.Value);
-            queues.Add(new(row.Queue.PublicId, row.Queue.Name, row.ServiceName, row.Queue.Status, waitingCount, WaitTimeEstimator.Calculate(waitingCount, row.AverageDurationMinutes, activeAttendants), acceptsNewTickets));
+            var queue = queues.SingleOrDefault(x => x.ServiceId == service.Id);
+            PublicBranchQueueDto? queueDto = null;
+            if (queue is not null)
+            {
+                var waiting = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == branch.OrganizationId && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);
+                var attendants = await ActiveAttendantsAsync(queue.Id, true, ct);
+                var canJoin = service.AttendanceMode != ServiceAttendanceMode.AppointmentOnly && queue.Status == QueueStatus.Open && (queue.Capacity is null || waiting < queue.Capacity.Value);
+                queueDto = new(queue.PublicId, queue.Name, service.Name, queue.Status, waiting, WaitTimeEstimator.Calculate(waiting, service.AverageDurationMinutes, attendants), canJoin);
+            }
+            catalog.Add(new(service.PublicId, service.Name, service.Description, service.AttendanceMode, queueDto, queueDto?.AcceptsNewTickets == true,
+                service.AttendanceMode != ServiceAttendanceMode.QueueOnly && settings.Contains(service.Id)));
         }
-        var appointmentServices = await db.Services.IgnoreQueryFilters().AsNoTracking()
-            .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.IsActive && x.AttendanceMode != ServiceAttendanceMode.QueueOnly)
-            .OrderBy(x => x.Name).Select(x => new PublicBranchServiceDto(x.PublicId, x.Name, x.AttendanceMode)).ToListAsync(ct);
-        return Result.Success(new PublicBranchDto(branch.PublicId, organizationName, branch.Name, queues, appointmentServices));
+        // Keep legacy collections for existing public consumers; the unit UI uses Services.
+        return Result.Success(new PublicBranchDto(branch.PublicId, organization.Name, branch.Name,
+            catalog.Where(x => x.Queue != null).Select(x => x.Queue!).ToArray(),
+            catalog.Where(x => x.CanSchedule).Select(x => new PublicBranchServiceDto(x.PublicId, x.Name, x.AttendanceMode)).ToArray(), catalog));
     }
+
     public async Task<Result<PublicOrganizationDto>> GetPublicOrganizationAsync(string slug, CancellationToken ct)
     {
         var normalizedSlug = slug.Trim().ToLowerInvariant();
@@ -103,7 +119,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var result = branches.Select(branch => new PublicOrganizationBranchDto(branch.PublicId, branch.Name, branch.Address, branch.TimeZone,
             services.Where(service => service.BranchId == branch.Id).Select(service =>
             {
-                var queue = queues.FirstOrDefault(value => value.ServiceId == service.Id);
+                var queue = queues.SingleOrDefault(value => value.ServiceId == service.Id && value.BranchId == branch.Id);
                 var canJoin = service.AttendanceMode != ServiceAttendanceMode.AppointmentOnly && queue is not null && queue.Status == QueueStatus.Open && (queue.Capacity is null || waitingCounts.GetValueOrDefault(queue.Id) < queue.Capacity.Value);
                 var canSchedule = service.AttendanceMode != ServiceAttendanceMode.QueueOnly && schedulingServiceIds.Contains(service.Id);
                 return new PublicOrganizationServiceDto(service.PublicId, service.Name, service.Description, service.AverageDurationMinutes, service.AttendanceMode, queue?.PublicId, canJoin, canSchedule);
@@ -118,7 +134,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var branch = await db.Branches.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.Id == service.BranchId && x.OrganizationId == service.OrganizationId && x.IsActive, ct);
         var organization = await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == service.OrganizationId && x.IsActive, ct);
         if (branch is null || organization is null) return ServiceNotFound();
-        var queue = await db.Queues.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == organization.Id && x.ServiceId == service.Id && x.IsActive).OrderBy(x => x.Name).FirstOrDefaultAsync(ct);
+        var queue = await db.Queues.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == organization.Id && x.ServiceId == service.Id && x.BranchId == branch.Id && x.IsActive).SingleOrDefaultAsync(ct);
         var waitingCount = queue is null ? 0 : await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == organization.Id && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);
         var canJoin = service.AttendanceMode != ServiceAttendanceMode.AppointmentOnly && queue is not null && queue.Status == QueueStatus.Open && (queue.Capacity is null || waitingCount < queue.Capacity.Value);
         var canSchedule = service.AttendanceMode != ServiceAttendanceMode.QueueOnly && await db.ServiceSchedulingSettings.IgnoreQueryFilters().AnyAsync(x => x.OrganizationId == organization.Id && x.ServiceId == service.Id && x.IsActive, ct);
@@ -241,7 +257,10 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
     public Task<Result<TicketDto>> CancelAsync(Guid id, string? reason, CancellationToken ct) => TicketTransitionAsync(id, x => x.Cancel(clock.UtcNow), reason, ct);
     public Task<Result<TicketDto>> NoShowAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.MarkNoShow(clock.UtcNow), null, ct);
     public Task<Result<TicketDto>> RecallAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.Recall(clock.UtcNow), null, ct, "ticket.recalled");
-    private async Task<Result<QueueDto>> TransitionAsync(Guid id, Action<QueueFlowQueue> transition, CancellationToken ct) { var queue = await db.Queues.SingleOrDefaultAsync(x => x.Id == id, ct); if (queue is null) return Result.Failure<QueueDto>(new("queue.not_found", "Queue was not found.")); transition(queue); audit?.Write(queue.Status switch { QueueStatus.Open => "queue.opened", QueueStatus.Paused => "queue.paused", QueueStatus.Closed => "queue.closed", _ => "queue.updated" }, "Queue", queue.Id, new { Status = queue.Status.ToString() }); await db.SaveChangesAsync(ct); await realtime.QueueEventAsync(queue.PublicId, "queue.updated", new { queue.Id, queue.Status, queue.IsActive }, ct); return Result.Success(Map(queue)); }
+    private async Task<Result<QueueDto>> TransitionAsync(Guid id, Action<QueueFlowQueue> transition, CancellationToken ct) { var queue = await db.Queues.SingleOrDefaultAsync(x => x.Id == id, ct); if (queue is null) return Result.Failure<QueueDto>(new("queue.not_found", "Queue was not found.")); if (!await db.Services.AnyAsync(x => x.Id == queue.ServiceId && x.OrganizationId == Tenant && x.BranchId == queue.BranchId, ct)
+            || !await db.Branches.AnyAsync(x => x.Id == queue.BranchId && x.OrganizationId == Tenant, ct)) return Result.Failure<QueueDto>(new("queue.catalog_not_found", "Invalid queue ownership."));
+        if (queue.IsActive && await db.Queues.AnyAsync(x => x.Id != queue.Id && x.OrganizationId == Tenant && x.BranchId == queue.BranchId && x.ServiceId == queue.ServiceId && x.IsActive, ct)) return Result.Failure<QueueDto>(new("queue.already_active", "Este servi\u00e7o j\u00e1 possui uma fila ativa nesta unidade."));
+        transition(queue); audit?.Write(queue.Status switch { QueueStatus.Open => "queue.opened", QueueStatus.Paused => "queue.paused", QueueStatus.Closed => "queue.closed", _ => "queue.updated" }, "Queue", queue.Id, new { Status = queue.Status.ToString() }); await db.SaveChangesAsync(ct); await realtime.QueueEventAsync(queue.PublicId, "queue.updated", new { queue.Id, queue.Status, queue.IsActive }, ct); return Result.Success(Map(queue)); }
     private async Task<Result<TicketDto>> TicketTransitionAsync(Guid id, Action<QueueTicket> transition, string? reason, CancellationToken ct) { var ticket = await db.QueueTickets.SingleOrDefaultAsync(x => x.Id == id, ct); if (ticket is null) return Result.Failure<TicketDto>(new("ticket.not_found", "Ticket was not found.")); transition(ticket); db.TicketEvents.Add(new(Guid.NewGuid(), Tenant, ticket.Id, ticket.Status, reason, clock.UtcNow)); audit?.Write(ticket.Status == TicketStatus.Cancelled ? "ticket.cancelled_administratively" : $"ticket.{ticket.Status.ToString().ToLowerInvariant()}", "Ticket", ticket.Id, new { Reason = reason }); await db.SaveChangesAsync(ct); await PublishTicketStateAsync(ticket, EventName(ticket.Status), ct); return Result.Success(Map(ticket)); }
     private async Task<Result<TicketDto>> AttendantTicketTransitionAsync(Guid id, Action<QueueTicket> transition, string? reason, CancellationToken ct, string? eventName = null)
     {
