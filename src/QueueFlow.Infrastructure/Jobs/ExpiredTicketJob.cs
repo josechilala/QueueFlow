@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -21,7 +22,9 @@ internal sealed partial class ExpiredTicketJob(IServiceScopeFactory scopes, ICon
             await using var scope = scopes.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>(); var clock = scope.ServiceProvider.GetRequiredService<IClock>();
             var hours = Math.Max(1, configuration.GetValue("Jobs:ExpiredTicketHours", 8)); var cutoff = clock.UtcNow.AddHours(-hours);
             var expired = await db.QueueTickets.IgnoreQueryFilters().Where(x => x.Status == TicketStatus.Waiting && x.IssuedAt < cutoff).Take(200).ToListAsync(stoppingToken);
-            foreach (var ticket in expired) { ticket.Cancel(clock.UtcNow); db.TicketEvents.Add(new TicketEvent(Guid.NewGuid(), ticket.OrganizationId, ticket.Id, TicketStatus.Cancelled, "Expired", clock.UtcNow)); }
+            foreach (var ticket in expired) { ticket.Cancel(clock.UtcNow); db.TicketEvents.Add(new TicketEvent(Guid.NewGuid(), ticket.OrganizationId, ticket.Id, TicketStatus.Cancelled, "Expired", clock.UtcNow));
+                db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), ticket.OrganizationId, "ticket.realtime", JsonSerializer.Serialize(new { eventName = "ticket.cancelled", ticketToken = ticket.CustomerPublicToken, ticketId = ticket.Id, ticket.QueueId }), clock.UtcNow));
+            }
             await db.SaveChangesAsync(stoppingToken);
             QueueFlowTelemetry.RecordJobSuccess("expired_tickets");
         }

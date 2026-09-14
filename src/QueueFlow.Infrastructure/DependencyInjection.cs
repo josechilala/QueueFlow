@@ -40,6 +40,11 @@ public static class DependencyInjection
         return services;
     }
 
+    public static IServiceCollection AddQueueRealtimeProcessing(this IServiceCollection services)
+    {
+        services.AddHostedService(provider => new OutboxProcessor(provider.GetRequiredService<IServiceScopeFactory>(), provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<OutboxProcessor>>(), queueEventsOnly: true));
+        return services;
+    }
     public static IServiceCollection AddApiBackgroundProcessing(this IServiceCollection services) { services.AddHostedService<OutboxProcessor>(); return services; }
     public static IServiceCollection AddWorkerBackgroundProcessing(this IServiceCollection services) { services.AddHostedService<OutboxProcessor>(); services.AddHostedService<QueueMetricsJob>(); services.AddHostedService<ExpiredTicketJob>(); services.AddHostedService<AppointmentReminderJob>(); services.AddHostedService<AppointmentNoShowJob>(); services.AddHostedService<CleanupJob>(); return services; }
     public static IServiceCollection AddQueueFlowRealtimeBackplane(this IServiceCollection services, IConfiguration configuration)

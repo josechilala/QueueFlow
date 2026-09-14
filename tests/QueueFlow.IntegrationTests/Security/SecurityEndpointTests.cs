@@ -27,6 +27,22 @@ public sealed class SecurityEndpointTests : IClassFixture<QueueFlowApiFactory>
     }
 
     [Fact]
+    public async Task SignalRNegotiationAllowsBrowserHeaders()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/hubs/queue/negotiate?negotiateVersion=1");
+        request.Headers.Add("Origin", "http://localhost:3001");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "x-requested-with,x-signalr-user-agent");
+        using var response = await _client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal("http://localhost:3001", response.Headers.GetValues("Access-Control-Allow-Origin").Single());
+        var allowed = string.Join(",", response.Headers.GetValues("Access-Control-Allow-Headers"));
+        Assert.Contains("X-Requested-With", allowed, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("X-SignalR-User-Agent", allowed, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("true", response.Headers.GetValues("Access-Control-Allow-Credentials").Single());
+    }
+
+    [Fact]
     public async Task AuthenticationEndpointsAreRateLimitedPerClient()
     {
         HttpResponseMessage? last = null;

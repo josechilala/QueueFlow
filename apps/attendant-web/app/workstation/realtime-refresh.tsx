@@ -1,5 +1,34 @@
 'use client';
-import { HubConnectionBuilder } from '@microsoft/signalr';
+import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-export function RealtimeRefresh() { const router = useRouter(); useEffect(() => { const connection = new HubConnectionBuilder().withUrl(`${process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL ?? 'http://localhost:5260'}/hubs/queue`).withAutomaticReconnect().build(); let timer: ReturnType<typeof setTimeout>; connection.on('queue.updated', () => { clearTimeout(timer); timer = setTimeout(() => router.refresh(), 100); }); connection.start().catch(() => undefined); return () => { clearTimeout(timer); void connection.stop(); }; }, [router]); return null; }
+const events = ['QueueUpdated'];
+export function RealtimeRefresh({ queuePublicIds }: { queuePublicIds: string[] }) {
+  const queueKey = JSON.stringify([...new Set(queuePublicIds)].sort());
+  const router = useRouter();
+  useEffect(() => {
+    const connection = new HubConnectionBuilder().withUrl(`${process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL ?? 'http://localhost:5260'}/hubs/queue`).withAutomaticReconnect().configureLogging(LogLevel.Warning).build();
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (disposed || timer) return;
+      timer = setTimeout(() => { timer = undefined; if (!disposed) router.refresh(); }, 100);
+    };
+    const join = async () => {
+      await Promise.all((JSON.parse(queueKey) as string[]).map(id => connection.invoke('JoinQueueGroup', id)));
+      refresh();
+    };
+    const scheduleRetry = () => { if (!disposed && !retry) retry = setTimeout(() => { retry = undefined; void start(); }, 3000); };
+    const start = async () => {
+      try { await connection.start(); if (!disposed) await join(); }
+      catch { await connection.stop(); scheduleRetry(); }
+    };
+    events.forEach(eventName => connection.on(eventName, refresh));
+    connection.onreconnected(async () => { try { await join(); } catch { await connection.stop(); scheduleRetry(); } });
+    connection.onclose(scheduleRetry);
+    void start();
+    return () => { disposed = true; clearTimeout(timer); clearTimeout(retry); void connection.stop(); };
+  }, [queueKey, router]);
+  return null;
+}

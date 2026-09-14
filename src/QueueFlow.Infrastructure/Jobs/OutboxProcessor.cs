@@ -11,11 +11,11 @@ using QueueFlow.Application.Observability;
 
 namespace QueueFlow.Infrastructure.Jobs;
 
-internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogger<OutboxProcessor> logger) : BackgroundService
+internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogger<OutboxProcessor> logger, bool queueEventsOnly = false) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(queueEventsOnly ? 1 : 5));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try { await ProcessBatchAsync(stoppingToken); QueueFlowTelemetry.RecordJobSuccess("outbox"); }
@@ -32,7 +32,7 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var clock = scope.ServiceProvider.GetRequiredService<IClock>();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            var message = await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+            var message = await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE (\"Type\" = 'ticket.realtime') = {queueEventsOnly} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
             if (message is null) { await transaction.RollbackAsync(ct); break; }
             try
             {

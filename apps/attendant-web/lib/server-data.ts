@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { ACCESS_COOKIE, apiUrl, type User } from './auth';
 
 export type Branch = { id: string; name: string };
-export type Queue = { id: string; branchId: string; name: string; status: 'Draft' | 'Open' | 'Paused' | 'Closed'; waitingCount: number };
+export type Queue = { id: string; publicId: string; branchId: string; name: string; status: 'Draft' | 'Open' | 'Paused' | 'Closed'; waitingCount: number };
 export type Counter = { id: string; branchId: string; name: string };
 export type CurrentTicket = { id: string; queueId: string; counterId: string | null; ticketNumber: string; status: 'Called' | 'InService'; counterName: string | null };
 export type OperationContext = { branches: Branch[]; queues: Queue[]; counters: Counter[]; currentTicket: CurrentTicket | null };

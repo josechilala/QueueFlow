@@ -53,6 +53,7 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 builder.Services.AddInfrastructure(builder.Configuration);
+if (!args.Contains("--migrate-only", StringComparer.Ordinal) && !args.Contains("--healthcheck", StringComparer.Ordinal)) builder.Services.AddQueueRealtimeProcessing();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<TenantService>();
 builder.Services.AddScoped<CatalogService>();
@@ -98,7 +99,7 @@ var invalidCorsOrigin = corsOrigins.Any(origin =>
     return !(builder.Environment.IsStaging() && Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback);
 });
 if ((!builder.Environment.IsDevelopment() && corsOrigins.Length == 0) || invalidCorsOrigin) throw new InvalidOperationException("Non-development CORS origins must be explicit HTTPS origins; Staging also permits explicit loopback origins.");
-builder.Services.AddCors(options => options.AddPolicy("web", policy => policy.WithOrigins(corsOrigins).WithHeaders("Authorization", "Content-Type", "X-Correlation-ID", "X-SignalR-User-Agent").WithMethods("GET", "POST", "PUT", "PATCH", "DELETE").AllowCredentials()));
+builder.Services.AddCors(options => options.AddPolicy("web", policy => policy.WithOrigins(corsOrigins).WithHeaders("Authorization", "Content-Type", "X-Correlation-ID", "X-SignalR-User-Agent", "X-Requested-With").WithMethods("GET", "POST", "PUT", "PATCH", "DELETE").AllowCredentials()));
 builder.Services.AddRateLimiter(options =>
 {
     var globalPermitLimit = builder.Configuration.GetValue("RateLimiting:GlobalPermitLimit", 300);

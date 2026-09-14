@@ -14,7 +14,7 @@ using QueueFlow.Application.Observability;
 namespace QueueFlow.Application.Features.Queues;
 
 public sealed record QueueDto(Guid Id, Guid BranchId, Guid ServiceId, string Name, string PublicId, QueueStatus Status, int? Capacity, bool IsActive);
-public sealed record PublicQueueDto(string PublicId, string Name, string OrganizationName, string BranchName, string ServiceName, QueueStatus Status, int WaitingCount, int ActiveAttendants, int EstimatedWaitMinutes, bool AcceptsNewTickets);
+public sealed record PublicQueueDto(string PublicId, string Name, string OrganizationName, string BranchName, string ServiceName, QueueStatus Status, int WaitingCount, int ActiveAttendants, int EstimatedWaitMinutes, bool AcceptsNewTickets, IReadOnlyList<DisplayCallDto>? LatestCalls = null);
 public sealed record PublicBranchQueueDto(string PublicId, string Name, string ServiceName, QueueStatus Status, int WaitingCount, int EstimatedWaitMinutes, bool AcceptsNewTickets);
 public sealed record PublicBranchServiceDto(string PublicId, string Name, ServiceAttendanceMode AttendanceMode);
 public sealed record PublicBranchDto(string PublicId, string OrganizationName, string Name, IReadOnlyList<PublicBranchQueueDto> Queues, IReadOnlyList<PublicBranchServiceDto> AppointmentServices);
@@ -25,11 +25,11 @@ public sealed record PublicServiceLandingDto(string OrganizationSlug, string Org
 public sealed record TicketDto(Guid Id, string TicketNumber, string? CustomerPublicToken, TicketStatus Status, DateTimeOffset IssuedAt, int TicketsAhead, int EstimatedMinutes);
 public sealed record PublicTicketDto(string TicketNumber, TicketStatus Status, DateTimeOffset IssuedAt, int Position, int TicketsAhead, int EstimatedMinutes, string? CounterName);
 public sealed record OperationalBranchDto(Guid Id, string Name);
-public sealed record OperationalQueueDto(Guid Id, Guid BranchId, string Name, QueueStatus Status, int WaitingCount);
+public sealed record OperationalQueueDto(Guid Id, Guid BranchId, string Name, QueueStatus Status, int WaitingCount, string PublicId);
 public sealed record OperationalCounterDto(Guid Id, Guid BranchId, string Name);
 public sealed record OperationalTicketDto(Guid Id, Guid QueueId, Guid? CounterId, string TicketNumber, TicketStatus Status, string? CounterName);
 public sealed record AttendantContextDto(IReadOnlyList<OperationalBranchDto> Branches, IReadOnlyList<OperationalQueueDto> Queues, IReadOnlyList<OperationalCounterDto> Counters, OperationalTicketDto? CurrentTicket);
-public sealed record DisplayCallDto(string TicketNumber, string CounterName, DateTimeOffset CalledAt);
+public sealed record DisplayCallDto(string TicketNumber, string CounterName, DateTimeOffset CalledAt, Guid TicketId, Guid QueueId);
 public sealed record PublicDisplayDto(string BranchPublicId, string OrganizationName, string BranchName, IReadOnlyList<string> QueuePublicIds, IReadOnlyList<DisplayCallDto> LatestCalls);
 public sealed record PublicNotificationDto(Guid Id, string Message, DateTimeOffset CreatedAt, bool IsRead);
 
@@ -61,7 +61,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var waitingCount = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == queue.OrganizationId && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);
         var activeAttendants = await ActiveAttendantsAsync(queue.Id, ignoreQueryFilters: true, ct);
         var acceptsNewTickets = queue.IsActive && queue.Status == QueueStatus.Open && service.IsActive && (queue.Capacity is null || waitingCount < queue.Capacity.Value);
-        return Result.Success(new PublicQueueDto(queue.PublicId, queue.Name, organizationName, branchName, service.Name, queue.Status, waitingCount, activeAttendants, WaitTimeEstimator.Calculate(waitingCount, service.AverageDurationMinutes, activeAttendants), acceptsNewTickets));
+        return Result.Success(new PublicQueueDto(queue.PublicId, queue.Name, organizationName, branchName, service.Name, queue.Status, waitingCount, activeAttendants, WaitTimeEstimator.Calculate(waitingCount, service.AverageDurationMinutes, activeAttendants), acceptsNewTickets, await GetLatestCallsAsync(queue.BranchId, queue.Id, ct)));
     }
     public async Task<Result<PublicBranchDto>> GetPublicBranchAsync(string publicId, CancellationToken ct)
     {
@@ -131,11 +131,18 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         if (branch is null) return Result.Failure<PublicDisplayDto>(new("display.not_found", "A unidade não foi encontrada."));
         var organizationName = await db.Organizations.AsNoTracking().Where(x => x.Id == branch.OrganizationId).Select(x => x.Name).SingleAsync(ct);
         var queuePublicIds = await db.Queues.IgnoreQueryFilters().AsNoTracking().Where(x => x.BranchId == branch.Id && x.IsActive).Select(x => x.PublicId).ToListAsync(ct);
-        var rows = await db.QueueTickets.IgnoreQueryFilters().AsNoTracking().Where(x => x.BranchId == branch.Id && x.CalledAt != null && x.CounterId != null).OrderByDescending(x => x.CalledAt).Take(10).Select(x => new { x.TicketNumber, x.CounterId, CalledAt = x.CalledAt!.Value }).ToListAsync(ct);
-        var counterIds = rows.Select(x => x.CounterId!.Value).Distinct().ToArray();
-        var counterNames = await db.QueueCounters.IgnoreQueryFilters().AsNoTracking().Where(x => counterIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
-        var latestCalls = rows.Where(x => counterNames.ContainsKey(x.CounterId!.Value)).Select(x => new DisplayCallDto(x.TicketNumber, counterNames[x.CounterId!.Value], x.CalledAt)).ToList();
+        var latestCalls = await GetLatestCallsAsync(branch.Id, null, ct);
         return Result.Success(new PublicDisplayDto(branch.PublicId, organizationName, branch.Name, queuePublicIds, latestCalls));
+    }
+    private async Task<IReadOnlyList<DisplayCallDto>> GetLatestCallsAsync(Guid branchId, Guid? queueId, CancellationToken ct)
+    {
+        var rows = await db.QueueTickets.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.BranchId == branchId && (queueId == null || x.QueueId == queueId) && x.CalledAt != null && x.CounterId != null)
+            .OrderByDescending(x => x.CalledAt).Take(10)
+            .Select(x => new { x.Id, x.QueueId, x.TicketNumber, x.CounterId, CalledAt = x.CalledAt!.Value }).ToListAsync(ct);
+        var counterIds = rows.Select(x => x.CounterId!.Value).Distinct().ToArray();
+        var names = await db.QueueCounters.IgnoreQueryFilters().AsNoTracking().Where(x => counterIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+        return rows.Where(x => names.ContainsKey(x.CounterId!.Value)).Select(x => new DisplayCallDto(x.TicketNumber, names[x.CounterId!.Value], x.CalledAt, x.Id, x.QueueId)).ToList();
     }
     public Task<Result<QueueDto>> OpenAsync(Guid id, CancellationToken ct) => TransitionAsync(id, q => q.Open(clock.UtcNow), ct);
     public Task<Result<QueueDto>> PauseAsync(Guid id, CancellationToken ct) => TransitionAsync(id, q => q.Pause(clock.UtcNow), ct);
@@ -164,8 +171,8 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var branches = await db.Branches.AsNoTracking().Where(x => x.IsActive && allowedBranchIds.Contains(x.Id)).OrderBy(x => x.Name).Select(x => new OperationalBranchDto(x.Id, x.Name)).ToListAsync(ct);
         var branchIds = branches.Select(x => x.Id).ToArray();
         var waitingCounts = await db.QueueTickets.AsNoTracking().Where(x => x.Status == TicketStatus.Waiting).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
-        var queueRows = await db.Queues.AsNoTracking().Where(x => x.IsActive && x.Status != QueueStatus.Closed && branchIds.Contains(x.BranchId)).OrderBy(x => x.Name).Select(x => new { x.Id, x.BranchId, x.Name, x.Status }).ToListAsync(ct);
-        var queues = queueRows.Select(x => new OperationalQueueDto(x.Id, x.BranchId, x.Name, x.Status, waitingCounts.GetValueOrDefault(x.Id))).ToList();
+        var queueRows = await db.Queues.AsNoTracking().Where(x => x.IsActive && branchIds.Contains(x.BranchId)).OrderBy(x => x.Name).Select(x => new { x.Id, x.BranchId, x.Name, x.Status, x.PublicId }).ToListAsync(ct);
+        var queues = queueRows.Select(x => new OperationalQueueDto(x.Id, x.BranchId, x.Name, x.Status, waitingCounts.GetValueOrDefault(x.Id), x.PublicId)).ToList();
         var counters = await db.QueueCounters.AsNoTracking().Where(x => x.IsActive && branchIds.Contains(x.BranchId)).OrderBy(x => x.Name).Select(x => new OperationalCounterDto(x.Id, x.BranchId, x.Name)).ToListAsync(ct);
         var current = await db.QueueTickets.AsNoTracking().Where(x => x.AttendantUserId == userId && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService)).OrderByDescending(x => x.CalledAt).Select(x => new { x.Id, x.QueueId, x.CounterId, x.TicketNumber, x.Status }).FirstOrDefaultAsync(ct);
         string? counterName = null;
@@ -193,6 +200,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
             db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), Tenant, "notification.dispatch", JsonSerializer.Serialize(new { notificationId = notification.Id }), clock.UtcNow));
             await db.SaveChangesAsync(ct);
         }
+        await PublishTicketStateAsync(ticket, "ticket.called", ct);
         return Result.Success(Map(ticket));
     }
     public async Task<Result<PublicTicketDto>> GetPublicAsync(string token, CancellationToken ct)
