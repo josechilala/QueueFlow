@@ -16,11 +16,11 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
         if (!ValidPublicId(request.BranchPublicId) || !ValidPublicId(request.ServicePublicId)) return null;
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var branch = await db.Branches.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.PublicId == request.BranchPublicId && x.IsActive, cancellationToken);
-        if (branch is null) return null;
+        if (branch is null || !await db.Organizations.AnyAsync(x => x.Id == branch.OrganizationId && x.IsActive, cancellationToken)) return null;
         var service = await db.Services.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.PublicId == request.ServicePublicId && x.IsActive, cancellationToken);
         if (service is null || service.AttendanceMode == ServiceAttendanceMode.QueueOnly) return null;
         var settings = await LockSettingsAsync(branch.OrganizationId, service.Id, cancellationToken);
-        if (settings is null || !settings.IsActive) return null;
+        if (settings is null || !settings.IsActive || settings.BranchId != branch.Id) return null;
         var appointment = await BookSlotAsync(branch, service, settings, request.ScheduledStart, request.CustomerName, request.CustomerPhone, request.CustomerEmail, null, null, cancellationToken);
         if (appointment is null) return null;
         AddRealtime(appointment, "appointment.created");
@@ -86,10 +86,10 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
     {
         TimeZoneInfo zone; try { zone = TimeZoneInfo.FindSystemTimeZoneById(branch.TimeZone); } catch (TimeZoneNotFoundException) { return null; } catch (InvalidTimeZoneException) { return null; }
         var localStart = TimeZoneInfo.ConvertTime(requestedStart, zone); var requestedDate = DateOnly.FromDateTime(localStart.DateTime); var dayStart = requestedStart.AddDays(-1); var dayEnd = requestedStart.AddDays(1);
-        var schedules = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && x.IsActive && x.DayOfWeek == requestedDate.DayOfWeek).Select(x => new { x.StartTime, x.EndTime }).ToListAsync(cancellationToken);
+        var schedules = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && x.IsActive && x.DayOfWeek == requestedDate.DayOfWeek).Select(x => new { x.StartTime, x.EndTime }).ToListAsync(cancellationToken);
         var blocks = await db.ScheduleBlocks.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && (x.ServiceId == null || x.ServiceId == service.Id) && x.StartAt < dayEnd && x.EndAt > dayStart).Select(x => new SlotWindow(x.StartAt, x.EndAt)).ToListAsync(cancellationToken);
         var statuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed, AppointmentStatus.CheckedIn };
-        var reservations = await db.Appointments.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && x.Id != excludedAppointmentId && statuses.Contains(x.Status) && x.ScheduledStart < dayEnd && x.ScheduledEnd > dayStart).Select(x => new SlotWindow(x.ScheduledStart, x.ScheduledEnd)).ToListAsync(cancellationToken);
+        var reservations = await db.Appointments.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && x.Id != excludedAppointmentId && statuses.Contains(x.Status) && x.ScheduledStart < dayEnd && x.ScheduledEnd > dayStart).Select(x => new SlotWindow(x.ScheduledStart, x.ScheduledEnd)).ToListAsync(cancellationToken);
         var slot = AppointmentSlotGenerator.Generate(requestedDate, zone, schedules.Select(x => (x.StartTime, x.EndTime)).ToArray(), settings.SlotDurationMinutes, settings.CapacityPerSlot, clock.UtcNow.AddMinutes(settings.MinimumAdvanceMinutes), clock.UtcNow.AddDays(settings.MaximumAdvanceDays), blocks, reservations).SingleOrDefault(x => x.StartAt == requestedStart.ToUniversalTime());
         if (slot is null) return null;
         var appointment = new Appointment(Guid.NewGuid(), branch.OrganizationId, branch.Id, service.Id, name, phone, email, slot.StartAt, slot.EndAt, branch.TimeZone, settings.RequireConfirmation, clock.UtcNow, rescheduledFromAppointmentId: rescheduledFromId); db.Appointments.Add(appointment); return appointment;

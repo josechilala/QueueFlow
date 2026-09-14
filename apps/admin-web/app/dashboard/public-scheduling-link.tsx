@@ -25,7 +25,7 @@ export function PublicSchedulingLink({ url }: { url: string }) {
     </div>
     <div className="public-scheduling-actions">
       <button type="button" onClick={copy}>{feedback === 'copied' ? '✓ Link copiado' : 'Copiar link'}</button>
-      <a className="secondary-button" href={url} target="_blank" rel="noopener noreferrer">Abrir página</a>
+      <a className="secondary-button" href={url} target="_blank" rel="noopener noreferrer">Abrir link</a>
     </div>
     <span className={feedback === 'error' ? 'copy-feedback copy-error' : 'copy-feedback'} aria-live="polite">{feedback === 'copied' ? 'O link foi copiado para a área de transferência.' : feedback === 'error' ? 'Não foi possível copiar. Selecione e copie o endereço exibido.' : ''}</span>
   </article>;

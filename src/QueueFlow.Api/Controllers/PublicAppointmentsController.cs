@@ -7,6 +7,13 @@ namespace QueueFlow.Api.Controllers;
 [ApiController, Route("api/v1/public")]
 public sealed class PublicAppointmentsController(IAppointmentAvailabilityService availability, AppointmentBookingService booking, PublicAppointmentService appointments) : ControllerBase
 {
+    [HttpGet("organizations/{slug}/scheduling"), EnableRateLimiting("public")]
+    public async Task<IActionResult> Catalog(string slug, CancellationToken ct)
+    {
+        var result = await appointments.GetCatalogAsync(slug, ct);
+        return result.IsSuccess ? Ok(result.Value) : NotFound();
+    }
+
     [HttpGet("branches/{branchPublicId}/services/{servicePublicId}/availability"), EnableRateLimiting("public")]
     public async Task<IActionResult> GetAvailability(string branchPublicId, string servicePublicId, [FromQuery] DateOnly date, CancellationToken cancellationToken)
     {

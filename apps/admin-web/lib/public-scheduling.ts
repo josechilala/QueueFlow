@@ -10,7 +10,7 @@ export function buildPublicSchedulingUrl(baseUrl: string, organizationSlug: stri
   const origin = baseUrl.trim().replace(/\/$/, '');
   const slug = organizationSlug.trim();
   if (!origin || !slug) return null;
-  return `${origin}/empresa/${encodeURIComponent(slug)}`;
+  return `${origin}/agendamento/${encodeURIComponent(slug)}`;
 }
 
 export async function copyPublicSchedulingUrl(url: string, clipboard: Pick<Clipboard, 'writeText'> = navigator.clipboard) {

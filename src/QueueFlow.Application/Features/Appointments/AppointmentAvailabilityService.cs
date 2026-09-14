@@ -53,10 +53,10 @@ public sealed class AppointmentAvailabilityService(IApplicationDbContext db, ICl
     {
         if (!ValidPublicId(branchPublicId) || !ValidPublicId(servicePublicId)) return NotFound();
         var branch = await db.Branches.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.PublicId == branchPublicId && x.IsActive, cancellationToken);
-        if (branch is null) return NotFound();
-        var service = await db.Services.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.PublicId == servicePublicId && x.BranchId == branch.Id && x.IsActive, cancellationToken);
+        if (branch is null || !await db.Organizations.AnyAsync(x => x.Id == branch.OrganizationId && x.IsActive, cancellationToken)) return NotFound();
+        var service = await db.Services.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.PublicId == servicePublicId && x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.IsActive, cancellationToken);
         if (service is null || service.AttendanceMode == ServiceAttendanceMode.QueueOnly) return NotFound();
-        var settings = await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && x.IsActive, cancellationToken);
+        var settings = await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && x.IsActive, cancellationToken);
         if (settings is null) return NotFound();
         TimeZoneInfo timeZone;
         try { timeZone = TimeZoneInfo.FindSystemTimeZoneById(branch.TimeZone); }
@@ -65,13 +65,13 @@ public sealed class AppointmentAvailabilityService(IApplicationDbContext db, ICl
         var localDayStart = requestedDate.ToDateTime(TimeOnly.MinValue);
         var localDayEnd = requestedDate.AddDays(1).ToDateTime(TimeOnly.MinValue);
         var dayStart = ToUtc(localDayStart, timeZone); var dayEnd = ToUtc(localDayEnd, timeZone);
-        var schedules = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && x.IsActive && x.DayOfWeek == requestedDate.DayOfWeek).Select(x => new { x.StartTime, x.EndTime }).ToListAsync(cancellationToken);
+        var schedules = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && x.IsActive && x.DayOfWeek == requestedDate.DayOfWeek).Select(x => new { x.StartTime, x.EndTime }).ToListAsync(cancellationToken);
         var blocks = await db.ScheduleBlocks.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && (x.ServiceId == null || x.ServiceId == service.Id) && x.StartAt < dayEnd && x.EndAt > dayStart).Select(x => new SlotWindow(x.StartAt, x.EndAt)).ToListAsync(cancellationToken);
         var statuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed, AppointmentStatus.CheckedIn };
-        var reservations = await db.Appointments.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && statuses.Contains(x.Status) && x.ScheduledStart < dayEnd && x.ScheduledEnd > dayStart).Select(x => new SlotWindow(x.ScheduledStart, x.ScheduledEnd)).ToListAsync(cancellationToken);
+        var reservations = await db.Appointments.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && statuses.Contains(x.Status) && x.ScheduledStart < dayEnd && x.ScheduledEnd > dayStart).Select(x => new SlotWindow(x.ScheduledStart, x.ScheduledEnd)).ToListAsync(cancellationToken);
         var slots = AppointmentSlotGenerator.Generate(requestedDate, timeZone, schedules.Select(x => (x.StartTime, x.EndTime)).ToArray(), settings.SlotDurationMinutes, settings.CapacityPerSlot, clock.UtcNow.AddMinutes(settings.MinimumAdvanceMinutes), clock.UtcNow.AddDays(settings.MaximumAdvanceDays), blocks, reservations);
         var organizationName = await db.Organizations.AsNoTracking().Where(x => x.Id == branch.OrganizationId).Select(x => x.Name).SingleAsync(cancellationToken);
-        var availableDays = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.ServiceId == service.Id && x.IsActive).Select(x => x.DayOfWeek).Distinct().OrderBy(x => x).ToListAsync(cancellationToken);
+        var availableDays = await db.ServiceSchedules.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.ServiceId == service.Id && x.IsActive).Select(x => x.DayOfWeek).Distinct().OrderBy(x => x).ToListAsync(cancellationToken);
         var minimumLocal = TimeZoneInfo.ConvertTime(clock.UtcNow.AddMinutes(settings.MinimumAdvanceMinutes), timeZone);
         var maximumLocal = TimeZoneInfo.ConvertTime(clock.UtcNow.AddDays(settings.MaximumAdvanceDays), timeZone);
         return Result.Success(new PublicAvailabilityDto(branch.PublicId, service.PublicId, organizationName, branch.Name, service.Name, requestedDate, branch.TimeZone, DateOnly.FromDateTime(minimumLocal.DateTime), DateOnly.FromDateTime(maximumLocal.DateTime), availableDays, slots));

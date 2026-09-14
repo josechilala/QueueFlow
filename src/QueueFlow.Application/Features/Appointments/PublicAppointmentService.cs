@@ -8,8 +8,26 @@ namespace QueueFlow.Application.Features.Appointments;
 
 public sealed record PublicAppointmentDto(string PublicToken, string ConfirmationCode, AppointmentStatus Status, string OrganizationName, string BranchPublicId, string BranchName, string ServicePublicId, string ServiceName, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, bool CanCancel, bool CanReschedule, bool CanCheckIn, string? QueueTicketToken, string? QueueTicketNumber);
 
+public sealed record PublicSchedulingServiceDto(string PublicId, string Name, string? Description, ServiceAttendanceMode AttendanceMode, bool CanSchedule);
+public sealed record PublicSchedulingBranchDto(string PublicId, string Name, string? Address, string TimeZone, IReadOnlyList<PublicSchedulingServiceDto> Services);
+public sealed record PublicSchedulingOrganizationDto(string Slug, string Name, IReadOnlyList<PublicSchedulingBranchDto> Branches);
+
 public sealed class PublicAppointmentService(IApplicationDbContext db, IClock clock, IAppointmentOperations operations)
 {
+    public async Task<Result<PublicSchedulingOrganizationDto>> GetCatalogAsync(string slug, CancellationToken ct)
+    {
+        var normalized = slug.Trim().ToLowerInvariant();
+        var organization = await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.Slug == normalized && x.IsActive, ct);
+        if (organization is null) return Result.Failure<PublicSchedulingOrganizationDto>(new("organization.not_found", "Organization was not found."));
+        var branches = await db.Branches.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == organization.Id && x.IsActive).OrderBy(x => x.Name).ToListAsync(ct);
+        var ids = branches.Select(x => x.Id).ToArray();
+        var services = await db.Services.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == organization.Id && ids.Contains(x.BranchId) && x.IsActive && x.AttendanceMode != ServiceAttendanceMode.QueueOnly).OrderBy(x => x.Name).ToListAsync(ct);
+        var settings = await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == organization.Id && ids.Contains(x.BranchId) && x.IsActive).Select(x => new { x.BranchId, x.ServiceId }).ToListAsync(ct);
+        return Result.Success(new PublicSchedulingOrganizationDto(organization.Slug, organization.Name, branches.Select(branch =>
+            new PublicSchedulingBranchDto(branch.PublicId, branch.Name, branch.Address, branch.TimeZone, services.Where(service => service.BranchId == branch.Id).Select(service =>
+                new PublicSchedulingServiceDto(service.PublicId, service.Name, service.Description, service.AttendanceMode, settings.Any(x => x.BranchId == branch.Id && x.ServiceId == service.Id))).ToArray())).ToArray()));
+    }
+
     public async Task<Result<PublicAppointmentDto>> GetAsync(string publicToken, CancellationToken cancellationToken)
     {
         if (publicToken.Length != 32 || !publicToken.All(Uri.IsHexDigit)) return NotFound();
