@@ -6,6 +6,8 @@
 *.user
 *.suo
 TestResults/
+.artifacts/
+.codex-*.log
 coverage/
 node_modules/
 **/.next/

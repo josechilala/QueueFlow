@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddSingleton<IPasswordService, PasswordService>();
         services.AddSingleton<IQueueRealtimeNotifier, SignalRQueueRealtimeNotifier>();
         services.AddScoped<INotificationSender, InAppNotificationSender>();
+        services.AddScoped<IActivationEmailSender, ActivationEmailSender>();
         services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddSingleton<IClock, SystemClock>();
 

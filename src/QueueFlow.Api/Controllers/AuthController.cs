@@ -6,16 +6,23 @@ using QueueFlow.Application.Features.Tenants;
 
 namespace QueueFlow.Api.Controllers;
 
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 [ApiController, Route("api/v1/auth")]
-public sealed class AuthController(AuthService auth, TenantService tenants) : ControllerBase
+public sealed class AuthController(AuthService auth, TenantService tenants, IConfiguration configuration, IHostEnvironment environment) : ControllerBase
 {
     [HttpPost("register"), EnableRateLimiting("auth")]
-    public async Task<IActionResult> Register(CreateOrganizationCommand request, CancellationToken ct) { var result = await tenants.CreateOrganizationAsync(request, ct); return result.IsSuccess ? Created(string.Empty, result.Value) : Problem(result.Error.Description, statusCode: 400); }
+    public async Task<IActionResult> Register(CreateOrganizationCommand request, CancellationToken ct)
+    {
+        var allowed = configuration.GetValue("Onboarding:AllowPublicRegistration", false) && (environment.IsDevelopment() || environment.IsEnvironment("Test"));
+        if (!allowed) return NotFound();
+        var result = await tenants.CreateOrganizationAsync(request, ct);
+        return result.IsSuccess ? Created(string.Empty, result.Value) : Problem(result.Error.Description, statusCode: 400);
+    }
     [HttpPost("login"), EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
     [HttpPost("refresh"), EnableRateLimiting("auth")]
     public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct) { var result = await auth.RefreshAsync(request.RefreshToken, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
-    [HttpGet("me"), Authorize]
+    [HttpGet("me"), Authorize(Policy = "TenantIdentity")]
     public async Task<IActionResult> Me(CancellationToken ct) { var result = await auth.GetCurrentAsync(ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
 }
 

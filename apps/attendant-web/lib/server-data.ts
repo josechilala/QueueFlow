@@ -5,7 +5,29 @@ export type Branch = { id: string; name: string };
 export type Queue = { id: string; publicId: string; branchId: string; name: string; status: 'Draft' | 'Open' | 'Paused' | 'Closed'; waitingCount: number };
 export type Counter = { id: string; branchId: string; name: string };
 export type CurrentTicket = { id: string; queueId: string; counterId: string | null; ticketNumber: string; status: 'Called' | 'InService'; counterName: string | null };
-export type OperationContext = { branches: Branch[]; queues: Queue[]; counters: Counter[]; currentTicket: CurrentTicket | null };
+export type OperationContext = { servicePublicIds?: string[]; branches: Branch[]; queues: Queue[]; counters: Counter[]; currentTicket: CurrentTicket | null };
+export type OperationalAppointmentStatus = 'AwaitingConfirmation' | 'AwaitingArrival' | 'Waiting' | 'Called' | 'InService' | 'Completed' | 'NoShow' | 'Cancelled' | 'Rescheduled';
+export type OperationalAppointment = {
+  id: string;
+  branchId: string;
+  branchName: string;
+  customerName: string;
+  serviceName: string;
+  appointmentStatus: 'Scheduled' | 'Confirmed' | 'CheckedIn' | 'Completed' | 'Cancelled' | 'NoShow' | 'Rescheduled';
+  ticketStatus: 'Waiting' | 'Called' | 'InService' | 'Completed' | 'Cancelled' | 'NoShow' | null;
+  ticketNumber: string | null;
+  scheduledStart: string;
+  scheduledEnd: string;
+  scheduledLocalTime: string;
+  checkedInAt: string | null;
+  queueTicketId: string | null;
+  operationalStatus: OperationalAppointmentStatus;
+  arrivalConfirmed: boolean;
+  canConfirmArrival: boolean;
+  checkInAvailableAt: string | null;
+  checkInClosesAt: string | null;
+  delayMinutes: number | null;
+};
 
 async function query<T>(path: string): Promise<{ status: number; data?: T }> {
   const token = (await cookies()).get(ACCESS_COOKIE)?.value;
@@ -16,3 +38,4 @@ async function query<T>(path: string): Promise<{ status: number; data?: T }> {
 }
 export function getSession() { return query<User>('/api/v1/auth/me'); }
 export function getOperationContext() { return query<OperationContext>('/api/v1/operations/context'); }
+export function getTodayAppointments() { return query<OperationalAppointment[]>('/api/v1/operations/appointments/today'); }

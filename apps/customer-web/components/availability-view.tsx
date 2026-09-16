@@ -1,3 +1,4 @@
+import { configuredUrl } from '../lib/configured-url';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BookingForm } from '../app/agendar/[branchPublicId]/[servicePublicId]/booking-form';
@@ -8,7 +9,7 @@ type Availability = { branchPublicId: string; servicePublicId: string; organizat
 export async function AvailabilityView({ params, searchParams, backHref }: { params: Promise<{ branchPublicId: string; servicePublicId: string }>; searchParams: Promise<{ date?: string; reschedule?: string }>; backHref?: string }) {
   const ids = await params; const query = await searchParams;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(query.date ?? '') ? query.date! : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const apiUrl = process.env.QUEUEFLOW_API_URL ?? 'http://localhost:5260';
+  const apiUrl = configuredUrl(process.env.QUEUEFLOW_API_URL, 'http://localhost:5260');
   const response = await fetch(`${apiUrl}/api/v1/public/branches/${encodeURIComponent(ids.branchPublicId)}/services/${encodeURIComponent(ids.servicePublicId)}/availability?date=${date}`, { cache: 'no-store' });
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error('Não foi possível consultar os horários.');

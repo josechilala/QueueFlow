@@ -2,6 +2,8 @@ x-api-environment: &api-environment
   ASPNETCORE_ENVIRONMENT: Development
   ConnectionStrings__QueueFlowDatabase: Host=postgres;Port=5432;Database=queueflow;Username=queueflow;Password=${POSTGRES_PASSWORD:-queueflow-local-password}
   Authentication__JwtKey: ${AUTHENTICATION_JWT_KEY:-queueflow-local-jwt-key-change-in-production}
+  Onboarding__PublicUrl: http://localhost:3001
+  Onboarding__VerificationCodePepper: ${ONBOARDING_VERIFICATION_CODE_PEPPER:-}
   Redis__ConnectionString: redis:6379
   Redis__UseBackplane: "true"
   Cors__Origins__0: http://localhost:3000
@@ -117,12 +119,14 @@ services:
       args:
         NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080
         NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: http://localhost:3003
+        NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL: http://localhost:3002
     environment:
       <<: *web-environment
       QUEUEFLOW_SECURE_COOKIES: "false"
       QUEUEFLOW_PUBLIC_URL: http://localhost:3000
       QUEUEFLOW_CUSTOMER_URL: http://localhost:3001
       NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: http://localhost:3003
+      NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL: http://localhost:3002
     ports: ["3000:3000"]
     depends_on: { api: { condition: service_healthy } }
     restart: unless-stopped
@@ -131,7 +135,7 @@ services:
     build:
       context: .
       dockerfile: apps/customer-web/Dockerfile
-      args: { NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080 }
+      args: { NEXT_PUBLIC_QUEUEFLOW_API_URL: http://localhost:8080, NEXT_PUBLIC_QUEUEFLOW_ADMIN_URL: http://localhost:3000 }
     environment: *web-environment
     ports: ["3001:3000"]
     depends_on: { api: { condition: service_healthy } }

@@ -1,13 +1,15 @@
 'use client';
+import { configuredUrl } from '../../lib/configured-url';
+
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-const events = ['QueueUpdated'];
+const events = ['QueueUpdated', 'appointment.created', 'appointment.confirmed', 'appointment.cancelled', 'appointment.rescheduled', 'appointment.checked-in', 'appointment.completed', 'appointment.no-show'];
 export function RealtimeRefresh({ queuePublicIds }: { queuePublicIds: string[] }) {
   const queueKey = JSON.stringify([...new Set(queuePublicIds)].sort());
   const router = useRouter();
   useEffect(() => {
-    const connection = new HubConnectionBuilder().withUrl(`${process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL ?? 'http://localhost:5260'}/hubs/queue`).withAutomaticReconnect().configureLogging(LogLevel.Warning).build();
+    const connection = new HubConnectionBuilder().withUrl(`${configuredUrl(process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL, 'http://localhost:5260', true)}/hubs/queue`).withAutomaticReconnect().configureLogging(LogLevel.Warning).build();
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;

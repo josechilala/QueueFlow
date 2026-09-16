@@ -1,3 +1,4 @@
+import { RealtimeRefresh } from '../../../components/realtime-refresh';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { AdminShell } from '../../../components/admin-shell';
@@ -23,7 +24,7 @@ export default async function AppointmentPage({ params }: { params: Promise<{ id
     ? 'Nenhum lembrete gerado ainda'
     : `${item.notifications.sent} enviado(s), ${item.notifications.pending} pendente(s), ${item.notifications.failed} com falha`;
 
-  return <AdminShell user={session.user}>
+  return <AdminShell user={session.user}><RealtimeRefresh />
     <div className="section-heading"><div><Link href="/appointments">← Agendamentos</Link><h3>{item.customerName}</h3><p className="muted">{item.serviceName} · {item.branchName}</p></div></div>
     <section className="notice appointment-details">
       <h3>Rastreabilidade da reserva</h3>
@@ -43,7 +44,7 @@ export default async function AppointmentPage({ params }: { params: Promise<{ id
     </section>
     <section className="notice appointment-link-card">
       <h3>Link individual do cliente</h3>
-      <p className="muted">Use este endereço para ajudar o cliente a consultar, cancelar, reagendar ou fazer check-in quando permitido.</p>
+      <p className="muted">Use este endereço para ajudar o cliente a consultar, cancelar, reagendar ou confirmar a chegada quando permitido.</p>
       {publicUrl ? <AppointmentPublicLink url={publicUrl} /> : <p className="form-error">Link indisponível. Configure a URL do portal do cliente.</p>}
     </section>
     <div className="section-heading"><div><h3>Histórico de alterações</h3><p className="muted">Transições administrativas e operacionais registradas para esta reserva.</p></div></div>

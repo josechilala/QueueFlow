@@ -120,6 +120,7 @@ public sealed class TicketIssuanceConcurrencyTests : IClassFixture<QueueFlowApiF
         public Guid? UserId => userId;
         public Guid? OrganizationId => organizationId;
         public UserRole? Role => UserRole.Attendant;
+        public IdentityType? IdentityType => QueueFlow.Domain.Enums.IdentityType.Tenant;
         public bool IsAuthenticated => true;
     }
 

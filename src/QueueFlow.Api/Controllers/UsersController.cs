@@ -39,6 +39,7 @@ public sealed class UsersController(UserManagementService users) : ControllerBas
     {
         "users.not_found" => StatusCodes.Status404NotFound,
         "users.forbidden" => StatusCodes.Status403Forbidden,
+        "users.email_conflict" => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status400BadRequest,
     });
 }

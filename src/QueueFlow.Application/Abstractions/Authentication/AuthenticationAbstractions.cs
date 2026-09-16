@@ -5,14 +5,17 @@ namespace QueueFlow.Application.Abstractions.Authentication;
 public interface ICurrentUser
 {
     Guid? UserId { get; }
+    Guid? PlatformUserId => null;
     Guid? OrganizationId { get; }
     UserRole? Role { get; }
+    IdentityType? IdentityType => null;
     bool IsAuthenticated { get; }
 }
 
 public interface ITokenService
 {
     string CreateAccessToken(Guid userId, Guid organizationId, UserRole role, string email);
+    string CreatePlatformAccessToken(Guid platformUserId, string email);
     string CreateRefreshToken();
     string HashToken(string token);
 }

@@ -1,3 +1,4 @@
+import { configuredUrl } from '../../../lib/configured-url';
 import { notFound } from 'next/navigation';
 import { RealtimeRefresh } from '../../realtime-refresh';
 import { RefreshTicketButton } from './refresh-ticket-button';
@@ -6,7 +7,7 @@ type PublicTicket = { ticketNumber: string; status: TicketStatus; issuedAt: stri
 type PublicNotification = { id: string; message: string; createdAt: string; isRead: boolean };
 const labels: Record<TicketStatus, string> = { Waiting: 'Aguardando', Called: 'Chamado', InService: 'Em atendimento', Completed: 'Concluído', Cancelled: 'Cancelado', NoShow: 'Não compareceu', Transferred: 'Transferido' };
 export default async function TicketPage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = await params; const apiUrl = process.env.QUEUEFLOW_API_URL ?? 'http://localhost:5260';
+  const { token } = await params; const apiUrl = configuredUrl(process.env.QUEUEFLOW_API_URL, 'http://localhost:5260');
   const [ticketResponse, notificationResponse] = await Promise.all([fetch(`${apiUrl}/api/v1/public/tickets/${encodeURIComponent(token)}`, { cache: 'no-store' }), fetch(`${apiUrl}/api/v1/public/tickets/${encodeURIComponent(token)}/notifications`, { cache: 'no-store' })]);
   if (ticketResponse.status === 404) notFound(); if (!ticketResponse.ok) throw new Error('Não foi possível consultar a senha.');
   const ticket = await ticketResponse.json() as PublicTicket; const notifications = notificationResponse.ok ? await notificationResponse.json() as PublicNotification[] : [];

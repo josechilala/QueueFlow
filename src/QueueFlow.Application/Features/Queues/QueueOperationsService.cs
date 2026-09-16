@@ -29,7 +29,7 @@ public sealed record OperationalBranchDto(Guid Id, string Name);
 public sealed record OperationalQueueDto(Guid Id, Guid BranchId, string Name, QueueStatus Status, int WaitingCount, string PublicId);
 public sealed record OperationalCounterDto(Guid Id, Guid BranchId, string Name);
 public sealed record OperationalTicketDto(Guid Id, Guid QueueId, Guid? CounterId, string TicketNumber, TicketStatus Status, string? CounterName);
-public sealed record AttendantContextDto(IReadOnlyList<OperationalBranchDto> Branches, IReadOnlyList<OperationalQueueDto> Queues, IReadOnlyList<OperationalCounterDto> Counters, OperationalTicketDto? CurrentTicket);
+public sealed record AttendantContextDto(IReadOnlyList<OperationalBranchDto> Branches, IReadOnlyList<OperationalQueueDto> Queues, IReadOnlyList<OperationalCounterDto> Counters, OperationalTicketDto? CurrentTicket, IReadOnlyList<string>? ServicePublicIds = null);
 public sealed record DisplayCallDto(string TicketNumber, string CounterName, DateTimeOffset CalledAt, Guid TicketId, Guid QueueId);
 public sealed record PublicDisplayDto(string BranchPublicId, string OrganizationName, string BranchName, IReadOnlyList<string> QueuePublicIds, IReadOnlyList<DisplayCallDto> LatestCalls);
 public sealed record PublicNotificationDto(Guid Id, string Message, DateTimeOffset CreatedAt, bool IsRead);
@@ -194,7 +194,8 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         string? counterName = null;
         if (current?.CounterId is not null) counterName = await db.QueueCounters.Where(x => x.Id == current.CounterId).Select(x => x.Name).SingleOrDefaultAsync(ct);
         var currentTicket = current is null ? null : new OperationalTicketDto(current.Id, current.QueueId, current.CounterId, current.TicketNumber, current.Status, counterName);
-        return Result.Success(new AttendantContextDto(branches, queues, counters, currentTicket));
+        var servicePublicIds = await db.Services.AsNoTracking().Where(x => x.IsActive && branchIds.Contains(x.BranchId)).Select(x => x.PublicId).ToListAsync(ct);
+        return Result.Success(new AttendantContextDto(branches, queues, counters, currentTicket, servicePublicIds));
     }
     public async Task<Result<TicketDto>> CallNextAsync(Guid queueId, Guid counterId, CancellationToken ct)
     {

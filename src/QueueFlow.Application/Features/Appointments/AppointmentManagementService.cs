@@ -60,8 +60,21 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
     public Task<Result<AppointmentDetailsDto>> NoShowAsync(Guid id, string? reason, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.MarkNoShow(now), "appointment.no-show", reason, cancellationToken);
     public async Task<Result<AppointmentDetailsDto>> CheckInAsync(Guid id, CancellationToken cancellationToken)
     {
+        var appointment = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (appointment is null) return NotFound<AppointmentDetailsDto>();
+        if (appointment.QueueTicketId is not null) return await GetAsync(id, cancellationToken);
+
         var result = await operations.CheckInAsync(id, cancellationToken);
-        if (result is null) return Result.Failure<AppointmentDetailsDto>(new("appointments.check_in_not_allowed", "O check-in não está disponível agora, já foi realizado ou a fila está fechada."));
+        if (result is null)
+        {
+            var current = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            if (current?.QueueTicketId is not null) return await GetAsync(id, cancellationToken);
+            var hasQueue = current is not null && await db.Queues.AsNoTracking().AnyAsync(x =>
+                x.OrganizationId == Tenant && x.BranchId == current.BranchId && x.ServiceId == current.ServiceId &&
+                x.IsActive && x.Status == QueueStatus.Open, cancellationToken);
+            if (!hasQueue) return Result.Failure<AppointmentDetailsDto>(new("appointments.queue_unavailable", "Não há fila ativa para este serviço."));
+            return Result.Failure<AppointmentDetailsDto>(new("appointments.check_in_not_allowed", "A confirmação de chegada não está disponível agora."));
+        }
         audit.Write("appointment.checked-in", "Appointment", id, new { result.Ticket.Id, result.Ticket.TicketNumber });
         await db.SaveChangesAsync(cancellationToken);
         return await GetAsync(id, cancellationToken);

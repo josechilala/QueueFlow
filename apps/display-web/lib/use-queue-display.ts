@@ -1,4 +1,6 @@
 'use client';
+import { configuredUrl } from './configured-url';
+
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -12,7 +14,7 @@ export function useQueueDisplay(queuePublicIds: string[], initialCalls: DisplayC
   const [connected, setConnected] = useState(false);
   useEffect(() => { setHistory(initialCalls.slice(0, limit)); }, [initialCalls, limit]);
   useEffect(() => {
-    const connection = new HubConnectionBuilder().withUrl(`${process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL ?? 'http://localhost:5260'}/hubs/queue`).withAutomaticReconnect().build();
+    const connection = new HubConnectionBuilder().withUrl(`${configuredUrl(process.env.NEXT_PUBLIC_QUEUEFLOW_API_URL, 'http://localhost:5260', true)}/hubs/queue`).withAutomaticReconnect().build();
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;

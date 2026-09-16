@@ -41,7 +41,7 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         if (string.IsNullOrEmpty(request.Password) || request.Password.Length < 12) return Result.Failure<ManagedUserDto>(new("users.password", "Password must contain at least 12 characters."));
         var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
         if (email.Length == 0) return Result.Failure<ManagedUserDto>(new("users.email", "Email is required."));
-        if (await db.Users.AnyAsync(x => x.Email == email, ct)) return Result.Failure<ManagedUserDto>(new("users.email_conflict", "Email is already in use."));
+        if (await db.Users.IgnoreQueryFilters().AnyAsync(x => x.Email == email, ct)) return Result.Failure<ManagedUserDto>(new("users.email_conflict", "Email is already in use."));
         var branchResult = await ValidateBranchesAsync(request.BranchIds, request.Role, ct);
         if (branchResult.IsFailure) return Result.Failure<ManagedUserDto>(branchResult.Error);
 

@@ -1,3 +1,4 @@
+import { configuredUrl } from '../../../lib/configured-url';
 import { RealtimeRefresh } from '../../realtime-refresh';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -8,7 +9,7 @@ type PublicBranch = { publicId: string; organizationName: string; name: string; 
 
 export default async function PublicBranchPage({ params }: { params: Promise<{ publicId: string }> }) {
   const { publicId } = await params;
-  const apiUrl = process.env.QUEUEFLOW_API_URL ?? 'http://localhost:5260';
+  const apiUrl = configuredUrl(process.env.QUEUEFLOW_API_URL, 'http://localhost:5260');
   const response = await fetch(`${apiUrl}/api/v1/public/branches/${encodeURIComponent(publicId)}`, { cache: 'no-store' });
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error('Não foi possível carregar os serviços da unidade.');

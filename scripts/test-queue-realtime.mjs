@@ -29,6 +29,7 @@ async function connect(method, id) {
   const events = [];
   const connection = new HubConnectionBuilder().withUrl(`${api}/hubs/queue`).withAutomaticReconnect([0, 100, 500]).configureLogging(LogLevel.Error).build();
   connection.on('QueueUpdated', payload => { events.push({ event: 'QueueUpdated', ...payload }); });
+  connection.on('appointment.created', payload => { events.push({ event: 'appointment.created', ...payload }); });
   connection.on('TicketCalled', payload => { events.push({ event: 'TicketCalled', ...payload }); });
   connection.onreconnected(() => connection.invoke(method, id));
   await connection.start(); await connection.invoke(method, id);
@@ -163,10 +164,18 @@ try {
     dayOfWeek: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][target.getUTCDay()],
     startTime: '00:00:00', endTime: '23:59:59',
   });
+  const serviceVisitor = await connect('JoinQueueGroup', service.publicId);
+  const beforeBooking = attendant.events.length;
   const appointment = await request('/api/v1/public/appointments', 'POST', {
     branchPublicId: branch.publicId, servicePublicId: service.publicId, scheduledStart: target.toISOString(),
     customerName: 'Realtime Appointment', customerEmail: 'appointment@test.local',
   }, false);
+  await until(() => serviceVisitor.events.some(event => event.event === 'appointment.created'), 'Public service receives appointment invalidation');
+  await until(() => attendant.events.slice(beforeBooking).some(event => event.event === 'QueueUpdated'), 'Open attendant list receives appointment booking invalidation');
+  assert.ok(!JSON.stringify(serviceVisitor.events).includes(appointment.publicToken), 'Anonymous service subscriber must not receive appointment capability');
+  assert.ok(!/appointmentToken|managementToken|cancelToken|rescheduleToken|password|refreshToken/i.test(JSON.stringify(serviceVisitor.events)), 'Public event contains no private capability fields');
+  const forbiddenCancel = await fetch(`${api}/api/v1/public/appointments/${service.publicId}/cancel`, { method: 'POST' });
+  assert.ok(!forbiddenCancel.ok, 'Public service id cannot cancel an appointment');
   const beforeCheckIn = customer.events.length;
   await request(`/api/v1/public/appointments/${appointment.publicToken}/check-in`, 'POST', {}, false);
   await until(() => customer.events.slice(beforeCheckIn).some(event => event.event === 'QueueUpdated' && event.waitingCount === 1), 'Check-in outbox should reach API connections without Redis');

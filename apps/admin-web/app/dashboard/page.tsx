@@ -1,14 +1,16 @@
+import { getOnboardingProgress } from '../../lib/server-onboarding';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { AdminShell } from '../../components/admin-shell';
+import { AccessLinks } from '../../components/access-links';
 import { RealtimeRefresh } from '../../components/realtime-refresh';
+import { canViewAccessLinks, getOrganizationAccessLinks } from '../../lib/access-links';
 import { authFailure } from '../../lib/auth';
 import { hasOperationalData } from '../../lib/dashboard';
 import { getDashboardSummary } from '../../lib/server-dashboard';
 import { getServerSession } from '../../lib/server-session';
-import { buildPublicSchedulingUrl, canViewPublicSchedulingLink } from '../../lib/public-scheduling';
+import { getConfiguredAccessOrigins } from '../../lib/server-access-links';
 import { LogoutButton } from './logout-button';
-import { PublicSchedulingLink } from './public-scheduling-link';
 
 export default async function DashboardPage() {
   const session = await getServerSession();
@@ -17,6 +19,7 @@ export default async function DashboardPage() {
   if (sessionFailure === 'forbidden') return <Forbidden message="Sua conta não possui permissão para acessar o painel administrativo." />;
   if (!session.user) throw new Error('Não foi possível validar a sessão administrativa.');
 
+  if (session.user.role === 'Owner' && !(await getOnboardingProgress()).completed) redirect('/onboarding');
   const dashboard = await getDashboardSummary();
   const dashboardFailure = authFailure(dashboard.status);
   if (dashboardFailure === 'unauthorized') redirect('/api/auth/refresh?returnTo=/dashboard');
@@ -24,9 +27,8 @@ export default async function DashboardPage() {
   if (!dashboard.summary) throw new Error('Não foi possível carregar o resumo administrativo.');
 
   const summary = dashboard.summary;
-  const canShareScheduling = canViewPublicSchedulingLink(session.user.role);
-  const customerOrigin = process.env.QUEUEFLOW_CUSTOMER_URL ?? (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001');
-  const schedulingUrl = buildPublicSchedulingUrl(customerOrigin, summary.organizationSlug);
+  const canShareAccess = canViewAccessLinks(session.user.role);
+  const accessLinks = getOrganizationAccessLinks(getConfiguredAccessOrigins(), summary.organizationSlug);
   const metrics = [
     { label: 'Filas ativas', value: summary.activeQueues.toLocaleString('pt-BR') },
     { label: 'Aguardando', value: summary.waiting.toLocaleString('pt-BR') },
@@ -36,9 +38,8 @@ export default async function DashboardPage() {
 
   return <AdminShell user={session.user}>
     <RealtimeRefresh />
-    {canShareScheduling && schedulingUrl
-      ? <PublicSchedulingLink url={schedulingUrl} />
-      : canShareScheduling && <article className="public-scheduling-card"><div><h3>Agendamento público</h3><p className="muted">Link público indisponível. Configure os dados públicos da organização.</p></div></article>}
+    {session.user.role === 'Owner' && <Link href="/onboarding">Configuração inicial da operação</Link>}
+    {canShareAccess && <AccessLinks title="Links de acesso" links={accessLinks} />}
     <section className="metric-grid" aria-label="Resumo operacional">
       {metrics.map(metric => <article className="metric-card" key={metric.label}><p>{metric.label}</p><strong>{metric.value}</strong></article>)}
     </section>

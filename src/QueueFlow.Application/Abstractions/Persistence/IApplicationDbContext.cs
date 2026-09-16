@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QueueFlow.Domain.Entities;
 using QueueFlowQueue = QueueFlow.Domain.Entities.Queue;
 
@@ -26,5 +27,11 @@ public interface IApplicationDbContext
     DbSet<ServiceSchedulingSettings> ServiceSchedulingSettings { get; }
     DbSet<ScheduleBlock> ScheduleBlocks { get; }
     DbSet<AppointmentStatusHistory> AppointmentStatusHistory { get; }
+    DbSet<PlatformUser> PlatformUsers { get; }
+    DbSet<PlatformRefreshToken> PlatformRefreshTokens { get; }
+    DbSet<OrganizationInvitation> OrganizationInvitations { get; }
+    DbSet<PlatformAuditLog> PlatformAuditLogs { get; }
+    Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+    Task LockPlatformBootstrapAsync(CancellationToken cancellationToken = default);
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

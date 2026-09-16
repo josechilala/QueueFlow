@@ -2,6 +2,8 @@ FROM node:24-alpine
 WORKDIR /app
 ARG NEXT_PUBLIC_QUEUEFLOW_API_URL=http://localhost:8080
 ENV NEXT_PUBLIC_QUEUEFLOW_API_URL=$NEXT_PUBLIC_QUEUEFLOW_API_URL
+ARG NEXT_PUBLIC_QUEUEFLOW_ADMIN_URL=http://localhost:3000
+ENV NEXT_PUBLIC_QUEUEFLOW_ADMIN_URL=$NEXT_PUBLIC_QUEUEFLOW_ADMIN_URL
 COPY package.json package-lock.json tsconfig.json ./
 COPY apps/customer-web apps/customer-web
 RUN --mount=type=cache,target=/root/.npm npm config set fetch-retries 5 \

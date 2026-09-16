@@ -1,3 +1,4 @@
+import { configuredUrl } from '../../../lib/configured-url';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -10,7 +11,7 @@ const modeLabel: Record<AttendanceMode, string> = { QueueOnly: 'Atendimento por 
 
 export default async function PublicOrganizationPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const apiUrl = process.env.QUEUEFLOW_API_URL ?? 'http://localhost:5260';
+  const apiUrl = configuredUrl(process.env.QUEUEFLOW_API_URL, 'http://localhost:5260');
   const response = await fetch(`${apiUrl}/api/v1/public/organizations/${encodeURIComponent(slug)}`, { cache: 'no-store' });
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error('Não foi possível carregar a empresa.');

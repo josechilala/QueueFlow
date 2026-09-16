@@ -5,6 +5,4 @@ export function setAuthCookie(response: NextResponse, tokens: TokenPair) { respo
 export function clearAuthCookie(response: NextResponse) {
   const options = { httpOnly: true, sameSite: 'lax' as const, secure, path: '/', maxAge: 0 };
   response.cookies.set(ACCESS_COOKIE, '', options);
-  response.cookies.set('queueflow_access', '', options);
-  response.cookies.set('queueflow_refresh', '', options);
 }

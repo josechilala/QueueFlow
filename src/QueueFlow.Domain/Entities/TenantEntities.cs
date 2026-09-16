@@ -14,6 +14,8 @@ public sealed class Organization : AuditableEntity
     public string Name { get; private set; } = string.Empty;
     public string Slug { get; private set; } = string.Empty;
     public string? Document { get; private set; }
+    public DateTimeOffset? OnboardingCompletedAt { get; private set; }
+    public void CompleteOnboarding(DateTimeOffset now) { OnboardingCompletedAt ??= now; MarkUpdated(now); }
     public string TimeZone { get; private set; } = string.Empty;
     public bool IsActive { get; private set; } = true;
     private static string Required(string value, string name) => string.IsNullOrWhiteSpace(value) ? throw new DomainException($"{name} is required.") : value.Trim();

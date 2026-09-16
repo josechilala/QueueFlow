@@ -42,14 +42,13 @@ internal sealed class SignalRQueueRealtimeNotifier(IHubContext<QueueHub> hub, IL
                         }
                         else return; // A delayed outbox call must not resurrect an old call.
                     }
-                }
-                else
-                {
-                    payload = JsonSerializer.SerializeToElement(payload).EnumerateObject()
-                        .Where(x => !x.Name.Contains("token", StringComparison.OrdinalIgnoreCase))
-                        .ToDictionary(x => JsonNamingPolicy.CamelCase.ConvertName(x.Name), x => x.Value.Clone());
+                    else return;
                 }
             }
+            // Public channels carry invalidation signals, never arbitrary outbox data.
+            // Ticket calls above are constructed from an explicit public projection.
+            if (eventName is not ("ticket.called" or "ticket.recalled") || queue is null)
+                payload = new { queuePublicId, timestamp = DateTimeOffset.UtcNow };
             await group.SendAsync(eventName, payload, cancellationToken);
             await hub.Clients.All.SendAsync("queue.updated", new { queuePublicId, sourceEvent = eventName }, cancellationToken);
         }

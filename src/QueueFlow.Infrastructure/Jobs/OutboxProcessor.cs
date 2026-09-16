@@ -32,7 +32,7 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var clock = scope.ServiceProvider.GetRequiredService<IClock>();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            var message = await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE (\"Type\" = 'ticket.realtime') = {queueEventsOnly} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+            var message = await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE (\"Type\" IN ('ticket.realtime', 'appointment.realtime')) = {queueEventsOnly} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
             if (message is null) { await transaction.RollbackAsync(ct); break; }
             try
             {
@@ -58,6 +58,8 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
                     var servicePublicId = await db.Services.IgnoreQueryFilters().Where(x => x.OrganizationId == message.OrganizationId && x.Id == serviceId).Select(x => x.PublicId).SingleAsync(ct);
                     var payload = JsonSerializer.Deserialize<object>(message.Payload)!; var realtime = scope.ServiceProvider.GetRequiredService<IQueueRealtimeNotifier>();
                     await realtime.TicketEventAsync(token, eventName, payload, ct); await realtime.QueueEventAsync(servicePublicId, eventName, payload, ct);
+                    var queueIds = await db.Queues.IgnoreQueryFilters().Where(x => x.OrganizationId == message.OrganizationId && x.ServiceId == serviceId && x.IsActive).Select(x => x.PublicId).ToListAsync(ct);
+                    foreach (var queueId in queueIds) await realtime.QueueEventAsync(queueId, eventName, new { servicePublicId }, ct);
                 }
                 else throw new InvalidOperationException($"Unsupported outbox type '{message.Type}'.");
                 message.MarkProcessed(clock.UtcNow);

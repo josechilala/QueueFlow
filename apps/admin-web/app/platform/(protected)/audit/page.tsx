@@ -1,0 +1,2 @@
+import { getPlatformAudit } from '../../../../lib/server-platform';
+export default async function AuditPage() { const result = await getPlatformAudit(); return <><div className="page-heading"><h1>Auditoria</h1></div><section className="table-card"><table><thead><tr><th>Data</th><th>Ação</th><th>Recurso</th></tr></thead><tbody>{result.data?.map(item => <tr key={item.id}><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.action}</td><td>{item.resourceType} {item.resourceId ?? ''}</td></tr>)}</tbody></table></section></>; }

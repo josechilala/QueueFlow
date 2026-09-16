@@ -1,3 +1,4 @@
+import { configuredUrl } from '../../../lib/configured-url';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { RealtimeRefresh } from '../../realtime-refresh';
@@ -7,7 +8,7 @@ type Appointment = { publicToken: string; confirmationCode: string; status: 'Sch
 const statusLabel: Record<Appointment['status'], string> = { Scheduled: 'Aguardando confirmação', Confirmed: 'Confirmado', CheckedIn: 'Check-in realizado', Completed: 'Concluído', Cancelled: 'Cancelado', NoShow: 'Não compareceu', Rescheduled: 'Reagendado' };
 
 export default async function AppointmentPage({ params }: { params: Promise<{ publicToken: string }> }) {
-  const { publicToken } = await params; const apiUrl = process.env.QUEUEFLOW_API_URL ?? 'http://localhost:5260';
+  const { publicToken } = await params; const apiUrl = configuredUrl(process.env.QUEUEFLOW_API_URL, 'http://localhost:5260');
   const response = await fetch(`${apiUrl}/api/v1/public/appointments/${encodeURIComponent(publicToken)}`, { cache: 'no-store' });
   if (response.status === 404) notFound(); if (!response.ok) throw new Error('Não foi possível carregar o agendamento.');
   const appointment = await response.json() as Appointment;

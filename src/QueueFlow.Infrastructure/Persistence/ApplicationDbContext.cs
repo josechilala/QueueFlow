@@ -30,6 +30,12 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<ServiceSchedulingSettings> ServiceSchedulingSettings => Set<ServiceSchedulingSettings>();
     public DbSet<ScheduleBlock> ScheduleBlocks => Set<ScheduleBlock>();
     public DbSet<AppointmentStatusHistory> AppointmentStatusHistory => Set<AppointmentStatusHistory>();
+    public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
+    public DbSet<PlatformRefreshToken> PlatformRefreshTokens => Set<PlatformRefreshToken>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+    public DbSet<PlatformAuditLog> PlatformAuditLogs => Set<PlatformAuditLog>();
+    public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) => Database.BeginTransactionAsync(cancellationToken);
+    public async Task LockPlatformBootstrapAsync(CancellationToken cancellationToken = default) => await Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(710041903)", cancellationToken);
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -41,6 +47,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     {
         ValidateTenantWrites();
         try { return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505", ConstraintName: "IX_Users_Email" })
+        { throw new QueueFlow.Application.Common.ConflictException("Email is already in use."); }
         catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505", ConstraintName: "UX_Queues_ActiveService" })
         { throw new DomainException("Este serviço já possui uma fila ativa nesta unidade."); }
     }
@@ -73,7 +81,16 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureTenant<ServiceSchedulingSettings>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<ScheduleBlock>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<AppointmentStatusHistory>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
-        modelBuilder.Entity<AppUser>().HasIndex(x => new { x.OrganizationId, x.Email }).IsUnique();
+        modelBuilder.Entity<AppUser>().HasIndex(x => x.Email).IsUnique();
+        modelBuilder.Entity<AppUser>().ToTable("Users", table => table.HasCheckConstraint("CK_Users_CanonicalEmail", "\"Email\" COLLATE \"C\" = queueflow_normalize_email(\"Email\") COLLATE \"C\""));
+        modelBuilder.Entity<PlatformUser>(b => { b.HasIndex(x => x.Email).IsUnique(); b.Property(x => x.Name).HasMaxLength(200); b.Property(x => x.Email).HasMaxLength(320); b.Property(x => x.PasswordHash).HasMaxLength(2000); });
+        modelBuilder.Entity<PlatformRefreshToken>(b => { b.HasIndex(x => x.TokenHash).IsUnique(); b.HasIndex(x => new { x.PlatformUserId, x.ExpiresAt }); b.Property(x => x.TokenHash).HasMaxLength(200); });
+        modelBuilder.Entity<OrganizationInvitation>(b =>
+        {
+            b.HasIndex(x => x.TokenHash).IsUnique(); b.HasIndex(x => new { x.Email, x.ExpiresAt }); b.HasIndex(x => x.ActivatedOrganizationId).IsUnique().HasFilter("\"ActivatedOrganizationId\" IS NOT NULL");
+            b.Property(x => x.Email).HasMaxLength(320); b.Property(x => x.ResponsibleName).HasMaxLength(200); b.Property(x => x.OrganizationName).HasMaxLength(200); b.Property(x => x.Plan).HasMaxLength(100); b.Property(x => x.TokenHash).HasMaxLength(200); b.Property(x => x.VerificationCodeHash).HasMaxLength(200); b.Property(x => x.ActivationAuthorizationHash).HasMaxLength(200);
+        });
+        modelBuilder.Entity<PlatformAuditLog>(b => { b.HasIndex(x => x.CreatedAt); b.HasIndex(x => new { x.PlatformUserId, x.CreatedAt }); b.Property(x => x.Action).HasMaxLength(200); b.Property(x => x.ResourceType).HasMaxLength(200); b.Property(x => x.CorrelationId).HasMaxLength(200); });
         modelBuilder.Entity<Service>(b =>
         {
             b.Property(x => x.PublicId).HasMaxLength(32);
@@ -141,7 +158,15 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
 
     private void ValidateTenantWrites()
     {
-        if (!currentUser.IsAuthenticated || currentUser.OrganizationId is not Guid tenantId) return;
+        if (!currentUser.IsAuthenticated) return;
+        if (currentUser.IdentityType == QueueFlow.Domain.Enums.IdentityType.Platform)
+        {
+            var platformWrite = ChangeTracker.Entries<ITenantEntity>().FirstOrDefault(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted);
+            if (platformWrite is not null) throw new UnauthorizedAccessException("Platform identities cannot write tenant entities.");
+            return;
+        }
+        if (currentUser.IdentityType != QueueFlow.Domain.Enums.IdentityType.Tenant || currentUser.OrganizationId is not Guid tenantId)
+            throw new UnauthorizedAccessException("Authenticated identities must have a valid tenant context for tenant writes.");
         var invalid = ChangeTracker.Entries<ITenantEntity>().FirstOrDefault(entry =>
             entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted && entry.Entity.OrganizationId != tenantId);
         if (invalid is not null) throw new UnauthorizedAccessException("Cross-tenant writes are not allowed.");

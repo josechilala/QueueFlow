@@ -11,16 +11,13 @@ export async function POST(request: Request) {
   const sessionResponse = await fetch(`${apiUrl}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${tokens.accessToken}` }, cache: 'no-store' });
   if (!sessionResponse.ok) return NextResponse.json({ message: 'Não foi possível carregar o perfil do usuário.' }, { status: 502 });
   const session = (await sessionResponse.json()) as AuthenticatedUser;
-  const response = NextResponse.json({ authenticated: true, role: session.role });
-  setAuthCookies(response, tokens);
-  if (session.role === 'Attendant') {
-    response.cookies.set('queueflow_attendant_access', tokens.accessToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.QUEUEFLOW_SECURE_COOKIES === 'true',
-      path: '/',
-      maxAge: 15 * 60
-    });
+  let needsOnboarding = false;
+  if (session.role === 'Owner') {
+    const progress = await fetch(`${apiUrl}/api/v1/onboarding`, { headers: { Authorization: `Bearer ${tokens.accessToken}` }, cache: 'no-store' });
+    if (!progress.ok) return NextResponse.json({ message: 'Não foi possível consultar a configuração.' }, { status: 502 });
+    needsOnboarding = !(await progress.json() as { completed: boolean }).completed;
   }
+  const response = NextResponse.json({ authenticated: true, role: session.role, needsOnboarding });
+  if (session.role !== 'Attendant') setAuthCookies(response, tokens);
   return response;
 }

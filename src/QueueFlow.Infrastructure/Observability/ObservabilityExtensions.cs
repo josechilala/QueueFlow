@@ -18,7 +18,7 @@ public static class ObservabilityExtensions
         openTelemetry.WithTracing(tracing =>
         {
             tracing.AddSource(QueueFlowTelemetry.Name).AddSource("Npgsql").AddHttpClientInstrumentation();
-            if (instrumentAspNetCore) tracing.AddAspNetCoreInstrumentation(options => options.Filter = context => !context.Request.Path.StartsWithSegments("/health"));
+            if (instrumentAspNetCore) tracing.AddAspNetCoreInstrumentation(options => options.Filter = context => !context.Request.Path.StartsWithSegments("/health") && !context.Request.Path.StartsWithSegments("/api/v1/public") && !context.Request.Path.StartsWithSegments("/hubs"));
             if (!string.IsNullOrWhiteSpace(configuration["OTEL_EXPORTER_OTLP_ENDPOINT"])) tracing.AddOtlpExporter();
         });
 

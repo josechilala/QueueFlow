@@ -17,6 +17,7 @@ using QueueFlow.Application.Features.Reports;
 using QueueFlow.Application.Features.Users;
 using QueueFlow.Application.Features.Auditing;
 using QueueFlow.Application.Features.Appointments;
+using QueueFlow.Application.Features.Platform;
 using QueueFlow.Infrastructure;
 using QueueFlow.Infrastructure.Realtime;
 using QueueFlow.Api.Middleware;
@@ -30,6 +31,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSerilog((services, logger) => logger
     .ReadFrom.Configuration(builder.Configuration)
     .ReadFrom.Services(services)
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Fatal)
+    .Enrich.With<SafeRequestLogEnricher>()
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Service", "queueflow-api")
     .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
@@ -56,6 +60,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 if (!args.Contains("--migrate-only", StringComparer.Ordinal) && !args.Contains("--healthcheck", StringComparer.Ordinal)) builder.Services.AddQueueRealtimeProcessing();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<TenantService>();
+builder.Services.AddScoped<OnboardingService>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<QueueOperationsService>();
 builder.Services.AddScoped<ReportingService>();
@@ -66,6 +71,17 @@ builder.Services.AddScoped<IAppointmentAvailabilityService, AppointmentAvailabil
 builder.Services.AddScoped<AppointmentBookingService>();
 builder.Services.AddScoped<PublicAppointmentService>();
 builder.Services.AddScoped<AppointmentManagementService>();
+builder.Services.AddScoped<OperationalAppointmentService>();
+builder.Services.Configure<OnboardingOptions>(builder.Configuration.GetSection("Onboarding"));
+builder.Services.PostConfigure<OnboardingOptions>(options =>
+{
+    options.AllowLocalPublicUrl = builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Test");
+    options.ExposeVerificationCodeForDevelopment &= builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Test");
+});
+builder.Services.AddScoped<PlatformAuthService>();
+builder.Services.AddScoped<OrganizationInvitationService>();
+builder.Services.AddScoped<PlatformAdministrationService>();
+builder.Services.AddScoped<PlatformBootstrapService>();
 var jwtKey = builder.Configuration["Authentication:JwtKey"] ?? throw new InvalidOperationException("Authentication:JwtKey must be provided through secrets or environment variables.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
@@ -83,13 +99,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 });
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("AdminPanel", policy => policy.RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString()));
-    options.AddPolicy("UserManagement", policy => policy.RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString()));
-    options.AddPolicy("AttendantPanel", policy => policy.RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString(), UserRole.Attendant.ToString()));
-    options.AddPolicy("OrganizationManagement", policy => policy.RequireRole(UserRole.Owner.ToString()));
-    options.AddPolicy("SubscriptionManagement", policy => policy.RequireRole(UserRole.Owner.ToString()));
-    options.AddPolicy("ReportRead", policy => policy.RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString(), UserRole.Viewer.ToString()));
-    options.AddPolicy("AuditRead", policy => policy.RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString()));
+    options.AddPolicy("TenantIdentity", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id"));
+    options.AddPolicy("AdminPanel", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString()));
+    options.AddPolicy("UserManagement", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString()));
+    options.AddPolicy("AttendantPanel", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString(), UserRole.Attendant.ToString()));
+    options.AddPolicy("OrganizationManagement", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString()));
+    options.AddPolicy("SubscriptionManagement", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString()));
+    options.AddPolicy("ReportRead", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString(), UserRole.Manager.ToString(), UserRole.Viewer.ToString()));
+    options.AddPolicy("AuditRead", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "tenant").RequireClaim("organization_id").RequireRole(UserRole.Owner.ToString(), UserRole.Admin.ToString()));
+    foreach (var name in Program.TenantPolicyNames)
+    {
+        var tenantPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(options.GetPolicy(name)!).RequireAssertion(context =>
+            context.User.FindAll("identity_type").Count() == 1 && context.User.FindAll("organization_id").Count() == 1 &&
+            Guid.TryParse(context.User.FindFirst("organization_id")?.Value, out var organizationId) && organizationId != Guid.Empty);
+        options.AddPolicy(name, tenantPolicy.Build());
+    }
+    options.AddPolicy("RequirePlatformAdmin", policy => policy.RequireAuthenticatedUser().RequireClaim("identity_type", "platform").RequireRole("PlatformAdmin").RequireAssertion(context => !context.User.HasClaim(claim => claim.Type == "organization_id")));
 });
 var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
 var invalidCorsOrigin = corsOrigins.Any(origin =>
@@ -119,6 +144,31 @@ builder.Services
 
 var app = builder.Build();
 
+if (args.Contains("--preflight-user-email", StringComparer.Ordinal))
+{
+    await using var preflightScope = app.Services.CreateAsyncScope();
+    var users = await preflightScope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Users.IgnoreQueryFilters().AsNoTracking().Select(user => new { user.Email, user.OrganizationId }).ToListAsync();
+    var duplicates = users.GroupBy(user => user.Email.Trim().ToLowerInvariant()).Where(group => group.Count() > 1)
+        .Select(group => new { Email = group.Key, Count = group.Count(), Organizations = group.Select(user => user.OrganizationId).ToArray() }).ToArray();
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(duplicates));
+    var noncanonical = users.Count(user => !string.Equals(user.Email, user.Email.Trim().ToLowerInvariant(), StringComparison.Ordinal));
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { NoncanonicalEmails = noncanonical }));
+    Environment.ExitCode = duplicates.Length == 0 && noncanonical == 0 ? 0 : 2;
+    return;
+}
+
+if (args.Contains("--provision-platform-admin", StringComparer.Ordinal))
+{
+    if (!builder.Configuration.GetValue("PlatformBootstrap:Enabled", false)) throw new InvalidOperationException("Platform bootstrap is disabled.");
+    var email = builder.Configuration["PlatformBootstrap:Email"] ?? throw new InvalidOperationException("Platform bootstrap email is required.");
+    var password = Environment.GetEnvironmentVariable("PlatformBootstrap__Password") ?? throw new InvalidOperationException("Platform bootstrap password must be supplied through the environment.");
+    var name = builder.Configuration["PlatformBootstrap:Name"] ?? "QueueFlow Platform Admin";
+    await using var bootstrapScope = app.Services.CreateAsyncScope();
+    var provisioned = await bootstrapScope.ServiceProvider.GetRequiredService<PlatformBootstrapService>().ProvisionFirstAdminAsync(name, email, password, CancellationToken.None);
+    if (!provisioned.IsSuccess) throw new InvalidOperationException(provisioned.Error.Description);
+    return;
+}
+
 if (args.Contains("--healthcheck", StringComparer.Ordinal))
 {
     try { using var healthClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) }; using var healthResponse = await healthClient.GetAsync("http://127.0.0.1:8080/health"); Environment.ExitCode = healthResponse.IsSuccessStatusCode ? 0 : 1; }
@@ -137,6 +187,7 @@ if (args.Contains("--migrate-only", StringComparer.Ordinal))
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(options => options.EnrichDiagnosticContext = (diagnostic, context) =>
 {
+    diagnostic.Set("RequestPath", (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched");
     diagnostic.Set("CorrelationId", context.TraceIdentifier);
     diagnostic.Set("RequestHost", context.Request.Host.Value);
 });
@@ -176,4 +227,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 
 app.Run();
 
-public partial class Program;
+public partial class Program
+{
+    internal static readonly string[] TenantPolicyNames = ["TenantIdentity", "AdminPanel", "UserManagement", "AttendantPanel", "OrganizationManagement", "SubscriptionManagement", "ReportRead", "AuditRead"];
+}

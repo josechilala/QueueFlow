@@ -3,6 +3,8 @@ x-staging-api-environment: &staging-api-environment
   DOTNET_ENVIRONMENT: Staging
   ConnectionStrings__QueueFlowDatabase: Host=postgres;Port=5432;Database=queueflow;Username=queueflow;Password=${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD in .env.staging};Maximum Pool Size=150;Timeout=120;Command Timeout=180
   Authentication__JwtKey: ${STAGING_AUTHENTICATION_JWT_KEY:?Set STAGING_AUTHENTICATION_JWT_KEY in .env.staging}
+  Onboarding__PublicUrl: ${STAGING_CUSTOMER_ORIGIN:-http://localhost:13001}
+  Onboarding__VerificationCodePepper: ${STAGING_ONBOARDING_VERIFICATION_CODE_PEPPER:-}
   Redis__ConnectionString: redis:6379
   Redis__UseBackplane: "true"
   Cors__Origins__0: ${STAGING_ADMIN_ORIGIN:-http://localhost:13000}
@@ -38,6 +40,7 @@ services:
       args:
         NEXT_PUBLIC_QUEUEFLOW_API_URL: ${STAGING_API_PUBLIC_URL:-http://localhost:18080}
         NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: ${STAGING_ATTENDANT_ORIGIN:-http://localhost:13003}
+        NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL: ${STAGING_DISPLAY_ORIGIN:-http://localhost:13002}
     environment:
       NODE_ENV: production
       QUEUEFLOW_API_URL: http://api:8080
@@ -46,12 +49,14 @@ services:
       QUEUEFLOW_PUBLIC_URL: ${STAGING_ADMIN_ORIGIN:-http://localhost:13000}
       QUEUEFLOW_CUSTOMER_URL: ${STAGING_CUSTOMER_ORIGIN:-http://localhost:13001}
       NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL: ${STAGING_ATTENDANT_ORIGIN:-http://localhost:13003}
+      NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL: ${STAGING_DISPLAY_ORIGIN:-http://localhost:13002}
     ports: !override ["${STAGING_ADMIN_PORT:-13000}:3000"]
 
   customer-web:
     build:
       args:
         NEXT_PUBLIC_QUEUEFLOW_API_URL: ${STAGING_API_PUBLIC_URL:-http://localhost:18080}
+        NEXT_PUBLIC_QUEUEFLOW_ADMIN_URL: ${STAGING_ADMIN_ORIGIN:-http://localhost:13000}
     environment:
       NODE_ENV: production
       QUEUEFLOW_API_URL: http://api:8080

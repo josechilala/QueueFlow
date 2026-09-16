@@ -38,6 +38,8 @@ public sealed class QueueFlowApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Authentication:JwtKey", "integration-test-key-with-at-least-thirty-two-characters");
+        var testDatabase = Environment.GetEnvironmentVariable("QUEUEFLOW_PLATFORM_TEST_DATABASE");
+        if (!string.IsNullOrWhiteSpace(testDatabase)) builder.UseSetting("ConnectionStrings:QueueFlowDatabase", testDatabase);
         builder.ConfigureLogging(logging => logging.ClearProviders());
     }
 }

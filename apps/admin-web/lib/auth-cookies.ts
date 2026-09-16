@@ -12,5 +12,4 @@ export function setAuthCookies(response: NextResponse, tokens: TokenPair) {
 export function clearAuthCookies(response: NextResponse) {
   response.cookies.set(ACCESS_COOKIE, '', { ...options, maxAge: 0 });
   response.cookies.set(REFRESH_COOKIE, '', { ...options, maxAge: 0 });
-  response.cookies.set('queueflow_attendant_access', '', { ...options, maxAge: 0 });
 }
