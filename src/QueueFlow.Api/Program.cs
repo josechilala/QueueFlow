@@ -6,7 +6,6 @@ using Microsoft.OpenApi;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
-using Microsoft.AspNetCore.HttpOverrides;
 using QueueFlow.Domain.Enums;
 using QueueFlow.Api.Health;
 using QueueFlow.Application.Features.Auth;
@@ -27,6 +26,8 @@ using QueueFlow.Infrastructure.Observability;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+if (string.Equals(builder.WebHost.GetSetting("FORWARDEDHEADERS_ENABLED"), "true", StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("Use ReverseProxy configuration instead of ASPNETCORE_FORWARDEDHEADERS_ENABLED.");
 
 builder.Services.AddSerilog((services, logger) => logger
     .ReadFrom.Configuration(builder.Configuration)
@@ -135,7 +136,7 @@ builder.Services.AddRateLimiter(options =>
         context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = globalPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("public", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions { PermitLimit = publicPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(LoginRateLimitKeyMiddleware.PartitionKey(context), _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 builder.Services
     .AddHealthChecks()
@@ -207,10 +208,11 @@ if (app.Environment.IsDevelopment())
 }
 
 if (!app.Environment.IsDevelopment()) app.UseHsts();
-app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
+app.UseForwardedHeaders(TrustedProxyOptions.Create(builder.Configuration));
 app.UseHttpsRedirection();
 app.UseCors("web");
 app.UseAuthentication();
+app.UseMiddleware<LoginRateLimitKeyMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
