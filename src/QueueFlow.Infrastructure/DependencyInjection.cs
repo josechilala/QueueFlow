@@ -34,6 +34,10 @@ public static class DependencyInjection
         services.AddSingleton<IPasswordService, PasswordService>();
         services.AddSingleton<IQueueRealtimeNotifier, SignalRQueueRealtimeNotifier>();
         services.AddScoped<INotificationSender, InAppNotificationSender>();
+        services.Configure<ResendOptions>(configuration.GetSection("Resend"));
+        services.AddHttpClient(ActivationEmailSender.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(15))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RemoveAllLoggers();
         services.AddScoped<IActivationEmailSender, ActivationEmailSender>();
         services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddSingleton<IClock, SystemClock>();
