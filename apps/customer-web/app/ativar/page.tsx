@@ -11,5 +11,5 @@ export default function ActivationPage() {
     setToken(window.location.hash.slice(1));
     window.history.replaceState(null, '', window.location.pathname);
   }, []);
-  return <main>{token === undefined ? <p>Carregando convite…</p> : <ActivationFlow token={token} />}</main>;
+  return <main><ActivationFlow token={token} /></main>;
 }
