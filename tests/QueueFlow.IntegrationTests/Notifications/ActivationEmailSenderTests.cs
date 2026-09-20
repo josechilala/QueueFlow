@@ -140,14 +140,14 @@ public sealed class ActivationEmailSenderTests
     }
 
     [Fact]
-    public async Task EnvironmentVariablesBindResendOptions()
+    public async Task EnvironmentVariablesBindResendOptionsAndNormalizeApiKey()
     {
         // Unique prefix avoids changing any real Resend settings or parallel tests.
         var prefix = $"QUEUEFLOW_TEST_{Guid.NewGuid():N}_";
         using var handler = new RecordingHandler();
         try
         {
-            Environment.SetEnvironmentVariable(prefix + "Resend__ApiKey", ApiKey);
+            Environment.SetEnvironmentVariable(prefix + "Resend__ApiKey", " \t" + ApiKey + "\r\n");
             Environment.SetEnvironmentVariable(prefix + "Resend__From", From);
             var configuration = new ConfigurationBuilder().AddEnvironmentVariables(prefix).Build();
             await using var provider = CreateProvider("Production", handler, extra: configuration);
@@ -163,37 +163,51 @@ public sealed class ActivationEmailSenderTests
     }
 
     [Theory]
-    [InlineData("Production", ApiKey, From, true, true, true, true, true)]
-    [InlineData("Production", "", From, false, false, true, true, false)]
-    [InlineData("Production", ApiKey, "", true, true, false, false, false)]
-    [InlineData("Production", "synthetic key", From, true, false, true, true, false)]
-    [InlineData("Production", "synthetic\r\nkey", From, true, false, true, true, false)]
-    [InlineData("Production", ApiKey, "invalid-address", true, true, true, false, false)]
-    [InlineData("Production", ApiKey, "sender@example.test\r\nBcc:other@example.test", true, true, true, false, false)]
-    [InlineData("Production", " ", " ", false, false, false, false, false)]
-    [InlineData("Development", "", "", false, false, false, false, true)]
-    [InlineData("Test", "", "", false, false, false, false, true)]
-    public async Task StartupDiagnosticLogsOnlyFiveBooleansFromBoundOptions(string environment, string key, string from,
-        bool apiKeyPresent, bool apiKeyValidFormat, bool fromPresent, bool fromValidFormat, bool isConfigured)
+    [InlineData(" ", " ")]
+    [InlineData("\t", "\t")]
+    [InlineData("\n", "\n")]
+    [InlineData("\r\n", "\r\n")]
+    [InlineData(" \t\r\n", "\n\t ")]
+    [InlineData("\u00a0", "\u2003")]
+    [InlineData(" ", "")]
+    [InlineData("", "\r\n")]
+    public async Task EdgeWhitespaceIsTrimmedForValidationAndBothSendOperations(string prefix, string suffix)
     {
         using var handler = new RecordingHandler();
         var logs = new CapturingLoggerProvider();
-        await using var provider = CreateProvider(environment, handler, key, from, logs);
-        provider.LogActivationEmailConfiguration();
-        var message = Assert.Single(logs.Messages);
-        Assert.Equal($"ApiKeyPresent={apiKeyPresent} ApiKeyValidFormat={apiKeyValidFormat} FromPresent={fromPresent} FromValidFormat={fromValidFormat} IsConfigured={isConfigured}", message);
-        var fields = Assert.Single(logs.Fields).Where(field => field.Key != "{OriginalFormat}").ToDictionary();
-        Assert.Equal(5, fields.Count);
-        Assert.Equal(apiKeyPresent, Assert.IsType<bool>(fields["ApiKeyPresent"]));
-        Assert.Equal(apiKeyValidFormat, Assert.IsType<bool>(fields["ApiKeyValidFormat"]));
-        Assert.Equal(fromPresent, Assert.IsType<bool>(fields["FromPresent"]));
-        Assert.Equal(fromValidFormat, Assert.IsType<bool>(fields["FromValidFormat"]));
-        Assert.Equal(isConfigured, Assert.IsType<bool>(fields["IsConfigured"]));
-        if (!string.IsNullOrWhiteSpace(key)) Assert.DoesNotContain(key, message);
-        if (!string.IsNullOrWhiteSpace(from)) Assert.DoesNotContain(from, message);
-        Assert.Empty(handler.Requests);
+        var paddedKey = prefix + ApiKey + suffix;
+        await using var provider = CreateProvider("Production", handler, paddedKey, From, logs);
         await using var scope = provider.CreateAsyncScope();
-        Assert.Equal(isConfigured, scope.ServiceProvider.GetRequiredService<IActivationEmailSender>().IsConfigured);
+        var sender = scope.ServiceProvider.GetRequiredService<IActivationEmailSender>();
+        Assert.True(sender.IsConfigured);
+        Assert.True(sender.SupportsInvitationDelivery);
+        await sender.SendVerificationCodeAsync("user@example.test", "123456", Ct);
+        await sender.SendInvitationAsync("user@example.test", "https://example.test/ativar#token", Ct);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, request => Assert.Equal($"Bearer {ApiKey}", request.Authorization));
+        Assert.DoesNotContain(logs.Messages, message => message.Contains(ApiKey, StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Messages, message => message.Contains("ApiKeyPresent=", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("re_synthetic key")]
+    [InlineData("re_synthetic\tkey")]
+    [InlineData("re_synthetic\nkey")]
+    [InlineData("re_synthetic\r\nkey")]
+    [InlineData("re_synthetic\u00a0key")]
+    [InlineData(" \tre_synthetic key\r\n")]
+    [InlineData(" \t\r\n")]
+    public async Task InternalWhitespaceAndEmptyTrimmedKeysAreRejectedWithoutSending(string key)
+    {
+        using var handler = new RecordingHandler();
+        await using var provider = CreateProvider("Production", handler, key);
+        await using var scope = provider.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<IActivationEmailSender>();
+        Assert.False(sender.IsConfigured);
+        Assert.False(sender.SupportsInvitationDelivery);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendVerificationCodeAsync("user@example.test", "123456", Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendInvitationAsync("user@example.test", "https://example.test/ativar#token", Ct));
+        Assert.Empty(handler.Requests);
     }
 
     private static ServiceProvider CreateProvider(string environment, RecordingHandler handler, string key = ApiKey,
@@ -243,18 +257,15 @@ public sealed class ActivationEmailSenderTests
     private sealed class CapturingLoggerProvider : ILoggerProvider
     {
         public System.Collections.Concurrent.ConcurrentBag<string> Messages { get; } = [];
-        public System.Collections.Concurrent.ConcurrentBag<KeyValuePair<string, object?>[]> Fields { get; } = [];
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages, Fields);
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages);
         public void Dispose() { }
-        private sealed class CapturingLogger(System.Collections.Concurrent.ConcurrentBag<string> messages,
-            System.Collections.Concurrent.ConcurrentBag<KeyValuePair<string, object?>[]> fields) : ILogger
+        private sealed class CapturingLogger(System.Collections.Concurrent.ConcurrentBag<string> messages) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
             public bool IsEnabled(LogLevel logLevel) => true;
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             {
                 messages.Add(formatter(state, exception));
-                if (state is IEnumerable<KeyValuePair<string, object?>> values) fields.Add(values.ToArray());
             }
         }
     }
