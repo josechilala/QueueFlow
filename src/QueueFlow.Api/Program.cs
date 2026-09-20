@@ -193,6 +193,9 @@ if (args.Contains("--migrate-only", StringComparer.Ordinal))
     return;
 }
 
+// Temporary: log only configuration booleans once per API startup, not for CLI commands.
+app.Services.LogActivationEmailConfiguration();
+
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(options => options.EnrichDiagnosticContext = (diagnostic, context) =>
 {

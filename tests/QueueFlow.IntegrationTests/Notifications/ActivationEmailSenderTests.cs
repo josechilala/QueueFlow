@@ -162,6 +162,40 @@ public sealed class ActivationEmailSenderTests
         }
     }
 
+    [Theory]
+    [InlineData("Production", ApiKey, From, true, true, true, true, true)]
+    [InlineData("Production", "", From, false, false, true, true, false)]
+    [InlineData("Production", ApiKey, "", true, true, false, false, false)]
+    [InlineData("Production", "synthetic key", From, true, false, true, true, false)]
+    [InlineData("Production", "synthetic\r\nkey", From, true, false, true, true, false)]
+    [InlineData("Production", ApiKey, "invalid-address", true, true, true, false, false)]
+    [InlineData("Production", ApiKey, "sender@example.test\r\nBcc:other@example.test", true, true, true, false, false)]
+    [InlineData("Production", " ", " ", false, false, false, false, false)]
+    [InlineData("Development", "", "", false, false, false, false, true)]
+    [InlineData("Test", "", "", false, false, false, false, true)]
+    public async Task StartupDiagnosticLogsOnlyFiveBooleansFromBoundOptions(string environment, string key, string from,
+        bool apiKeyPresent, bool apiKeyValidFormat, bool fromPresent, bool fromValidFormat, bool isConfigured)
+    {
+        using var handler = new RecordingHandler();
+        var logs = new CapturingLoggerProvider();
+        await using var provider = CreateProvider(environment, handler, key, from, logs);
+        provider.LogActivationEmailConfiguration();
+        var message = Assert.Single(logs.Messages);
+        Assert.Equal($"ApiKeyPresent={apiKeyPresent} ApiKeyValidFormat={apiKeyValidFormat} FromPresent={fromPresent} FromValidFormat={fromValidFormat} IsConfigured={isConfigured}", message);
+        var fields = Assert.Single(logs.Fields).Where(field => field.Key != "{OriginalFormat}").ToDictionary();
+        Assert.Equal(5, fields.Count);
+        Assert.Equal(apiKeyPresent, Assert.IsType<bool>(fields["ApiKeyPresent"]));
+        Assert.Equal(apiKeyValidFormat, Assert.IsType<bool>(fields["ApiKeyValidFormat"]));
+        Assert.Equal(fromPresent, Assert.IsType<bool>(fields["FromPresent"]));
+        Assert.Equal(fromValidFormat, Assert.IsType<bool>(fields["FromValidFormat"]));
+        Assert.Equal(isConfigured, Assert.IsType<bool>(fields["IsConfigured"]));
+        if (!string.IsNullOrWhiteSpace(key)) Assert.DoesNotContain(key, message);
+        if (!string.IsNullOrWhiteSpace(from)) Assert.DoesNotContain(from, message);
+        Assert.Empty(handler.Requests);
+        await using var scope = provider.CreateAsyncScope();
+        Assert.Equal(isConfigured, scope.ServiceProvider.GetRequiredService<IActivationEmailSender>().IsConfigured);
+    }
+
     private static ServiceProvider CreateProvider(string environment, RecordingHandler handler, string key = ApiKey,
         string from = From, CapturingLoggerProvider? logs = null, IConfiguration? extra = null)
     {
@@ -209,13 +243,19 @@ public sealed class ActivationEmailSenderTests
     private sealed class CapturingLoggerProvider : ILoggerProvider
     {
         public System.Collections.Concurrent.ConcurrentBag<string> Messages { get; } = [];
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages);
+        public System.Collections.Concurrent.ConcurrentBag<KeyValuePair<string, object?>[]> Fields { get; } = [];
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages, Fields);
         public void Dispose() { }
-        private sealed class CapturingLogger(System.Collections.Concurrent.ConcurrentBag<string> messages) : ILogger
+        private sealed class CapturingLogger(System.Collections.Concurrent.ConcurrentBag<string> messages,
+            System.Collections.Concurrent.ConcurrentBag<KeyValuePair<string, object?>[]> fields) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
             public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) => messages.Add(formatter(state, exception));
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                messages.Add(formatter(state, exception));
+                if (state is IEnumerable<KeyValuePair<string, object?>> values) fields.Add(values.ToArray());
+            }
         }
     }
 }

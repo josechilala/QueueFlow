@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using QueueFlow.Application.Abstractions.Clock;
 using QueueFlow.Application.Abstractions.Authentication;
 using QueueFlow.Application.Abstractions.Persistence;
@@ -19,6 +20,14 @@ namespace QueueFlow.Infrastructure;
 
 public static class DependencyInjection
 {
+    // Temporary diagnostic for the actual bound provider, without making an HTTP request.
+    public static void LogActivationEmailConfiguration(this IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        if (scope.ServiceProvider.GetRequiredService<IActivationEmailSender>() is ActivationEmailSender sender)
+            sender.LogConfiguration(scope.ServiceProvider.GetRequiredService<ILogger<ActivationEmailSender>>());
+    }
+
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("QueueFlowDatabase")
