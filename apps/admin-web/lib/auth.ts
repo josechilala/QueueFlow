@@ -5,6 +5,7 @@ export const REFRESH_COOKIE = 'queueflow_refresh';
 export type AuthenticatedUser = {
   userId: string;
   organizationId: string;
+  organizationName?: string | null;
   name: string;
   email: string;
   role: 'Owner' | 'Admin' | 'Manager' | 'Attendant' | 'Viewer';

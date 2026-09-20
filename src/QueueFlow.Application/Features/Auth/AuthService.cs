@@ -9,7 +9,7 @@ using QueueFlow.Domain.Enums;
 namespace QueueFlow.Application.Features.Auth;
 
 public sealed record TokenPair(string AccessToken, string RefreshToken);
-public sealed record AuthenticatedUser(Guid UserId, Guid OrganizationId, string Name, string Email, UserRole Role);
+public sealed record AuthenticatedUser(Guid UserId, Guid OrganizationId, string Name, string Email, UserRole Role, string? OrganizationName = null);
 
 public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, IPasswordService passwords, IClock clock, ICurrentUser currentUser)
 {
@@ -58,7 +58,12 @@ public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, 
             return Result.Failure<AuthenticatedUser>(new("auth.invalid_session", "The authenticated user is no longer active."));
         }
 
-        return Result.Success(new AuthenticatedUser(user.Id, user.OrganizationId, user.Name, user.Email, user.Role));
+        var organizationName = await db.Organizations.AsNoTracking()
+            .Where(x => x.Id == organizationId)
+            .Select(x => x.Name)
+            .SingleOrDefaultAsync(ct);
+
+        return Result.Success(new AuthenticatedUser(user.Id, user.OrganizationId, user.Name, user.Email, user.Role, organizationName));
     }
 
     private async Task<Result<TokenPair>> CreatePairAsync(AppUser user, CancellationToken ct)

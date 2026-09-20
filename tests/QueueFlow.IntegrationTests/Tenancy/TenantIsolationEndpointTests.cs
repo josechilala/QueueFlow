@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using QueueFlow.Application.Features.Auth;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +57,12 @@ public sealed class TenantIsolationEndpointTests : IClassFixture<QueueFlowApiFac
             var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
             using var client = isolated.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenService.CreateAccessToken(userA.Id, companyA.Id, userA.Role, userA.Email));
+
+            var identity = await client.GetFromJsonAsync<AuthenticatedUser>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+            Assert.NotNull(identity);
+            Assert.Equal(companyA.Id, identity.OrganizationId);
+            Assert.Equal(companyA.Name, identity.OrganizationName);
+            Assert.Equal(userA.Role, identity.Role);
 
             using var ownResponse = await client.GetAsync($"/api/v1/branches/{branchA.Id}", TestContext.Current.CancellationToken);
             using var foreignResponse = await client.GetAsync($"/api/v1/branches/{branchB.Id}", TestContext.Current.CancellationToken);
