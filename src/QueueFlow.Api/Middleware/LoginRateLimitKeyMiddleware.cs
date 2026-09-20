@@ -10,6 +10,10 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
 {
     private const int MaxBodyBytes = 16 * 1024;
     private static readonly object EmailHashKey = new();
+    private static readonly object RefreshHashKey = new();
+
+    public static string RefreshPartitionKey(HttpContext context) => context.Items.TryGetValue(RefreshHashKey, out var hash)
+        ? $"refresh:{hash}" : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 
     public static string PartitionKey(HttpContext context)
     {
@@ -20,7 +24,7 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
     public async Task InvokeAsync(HttpContext context)
     {
         var action = context.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
-        if (HttpMethods.IsPost(context.Request.Method) && action?.ActionName == "Login" &&
+        if (HttpMethods.IsPost(context.Request.Method) && action?.ActionName is "Login" or "Refresh" &&
             (action.ControllerTypeInfo.AsType() == typeof(AuthController) || action.ControllerTypeInfo.AsType() == typeof(PlatformAuthController)) &&
             context.Request.HasJsonContentType())
         {
@@ -48,13 +52,14 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
                 if (document.RootElement.ValueKind == JsonValueKind.Object)
                 {
                     // Match MVC's case-insensitive, last-property-wins JSON binding.
+                    var isRefresh = action.ActionName == "Refresh";
                     JsonElement email = default;
                     foreach (var property in document.RootElement.EnumerateObject())
-                        if (property.Name.Equals("email", StringComparison.OrdinalIgnoreCase)) email = property.Value;
+                        if (property.Name.Equals(isRefresh ? "refreshToken" : "email", StringComparison.OrdinalIgnoreCase)) email = property.Value;
                     if (email.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(email.GetString()))
                     {
-                        var normalized = email.GetString()!.Trim().ToLowerInvariant();
-                        context.Items[EmailHashKey] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+                        var normalized = isRefresh ? email.GetString()! : email.GetString()!.Trim().ToLowerInvariant();
+                        context.Items[isRefresh ? RefreshHashKey : EmailHashKey] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
                     }
                 }
             }

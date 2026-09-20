@@ -33,7 +33,7 @@ public sealed class LoginIdentityRateLimitTests
     }
 
     [Fact]
-    public async Task InvalidOrMissingEmailAndRefreshRetainIpQuota()
+    public async Task InvalidOrMissingEmailRetainsIpQuotaButRefreshHasSeparateQuota()
     {
         await using var root = new QueueFlowApiFactory();
         await using var factory = CreateFactory(root);
@@ -41,7 +41,40 @@ public sealed class LoginIdentityRateLimitTests
         for (var attempt = 0; attempt < 10; attempt++)
             Assert.Equal(400, await Send(factory, "/api/v1/auth/login", bodies[attempt % bodies.Length]));
         Assert.Equal(429, await Send(factory, "/api/v1/auth/login", "{}"));
-        Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", "{\"email\":\"new@example.test\"}"));
+        for (var attempt = 0; attempt < 30; attempt++)
+            Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
+        Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", "{}"));
+        Assert.Equal(400, await Send(factory, "/api/v1/auth/login", "{\"email\":\"other@example.test\"}"));
+    }
+
+    [Fact]
+    public async Task RefreshPartitionIsPerTokenWithoutLoggingSecretsOrTrustingForwardedIp()
+    {
+        async Task<string> Key(string token)
+        {
+            var body = JsonSerializer.Serialize(new { refreshToken = token });
+            var context = new DefaultHttpContext();
+            context.Connection.RemoteIpAddress = IPAddress.Parse("198.51.100.1");
+            context.Request.Method = "POST";
+            context.Request.ContentType = "application/json";
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+            context.SetEndpoint(new Endpoint(null, new EndpointMetadataCollection(new ControllerActionDescriptor
+            {
+                ActionName = "Refresh", ControllerTypeInfo = typeof(AuthController).GetTypeInfo(),
+            }), "refresh"));
+            await new LoginRateLimitKeyMiddleware(async current =>
+            {
+                using var reader = new StreamReader(current.Request.Body);
+                Assert.Equal(body, await reader.ReadToEndAsync());
+            }).InvokeAsync(context);
+            var key = LoginRateLimitKeyMiddleware.RefreshPartitionKey(context);
+            Assert.StartsWith("refresh:", key);
+            Assert.DoesNotContain(token, key);
+            return key;
+        }
+        Assert.Equal(await Key("secret-A"), await Key("secret-A"));
+        Assert.NotEqual(await Key("secret-A"), await Key("secret-a"));
+        Assert.NotEqual(await Key("secret-A"), await Key("secret-B"));
     }
 
     [Fact]

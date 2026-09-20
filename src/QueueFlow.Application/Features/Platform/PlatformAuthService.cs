@@ -24,10 +24,18 @@ public sealed class PlatformAuthService(IApplicationDbContext db, ITokenService 
         await using var transaction = await db.BeginTransactionAsync(ct);
         var hash = tokens.HashToken(refreshToken);
         var stored = await db.PlatformRefreshTokens.FromSqlInterpolated($"SELECT * FROM \"PlatformRefreshTokens\" WHERE \"TokenHash\" = {hash} FOR UPDATE").SingleOrDefaultAsync(ct);
-        if (stored is null || !stored.IsActive(clock.UtcNow)) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
-        stored.Revoke(clock.UtcNow);
+        if (stored is null || stored.ExpiresAt <= clock.UtcNow) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
         var user = await db.PlatformUsers.SingleAsync(x => x.Id == stored.PlatformUserId, ct);
-        if (!user.IsActive) { await db.SaveChangesAsync(ct); return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid.")); }
+        if (!user.IsActive)
+        {
+            stored.Revoke(clock.UtcNow);
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
+        }
+        // Preserve the winning request's cookies without allowing replay of the old token.
+        if (stored.RevokedAt is not null) return Result.Failure<TokenPair>(new("platform.refresh_conflict", "Refresh token has already been rotated."));
+        stored.Revoke(clock.UtcNow);
         var result = await CreatePairAsync(user, ct);
         await transaction.CommitAsync(ct);
         return result;

@@ -4,6 +4,7 @@ ARG NEXT_PUBLIC_QUEUEFLOW_API_URL=http://localhost:8080
 ENV NEXT_PUBLIC_QUEUEFLOW_API_URL=$NEXT_PUBLIC_QUEUEFLOW_API_URL
 COPY package.json package-lock.json tsconfig.json ./
 COPY apps/attendant-web apps/attendant-web
+COPY packages/session packages/session
 RUN --mount=type=cache,target=/root/.npm npm config set fetch-retries 5 \
     && npm config set fetch-retry-mintimeout 20000 \
     && npm config set fetch-retry-maxtimeout 120000 \

@@ -52,7 +52,7 @@ public sealed class PlatformLifecycleTests(PlatformTestFactory factory) : IClass
         using var tenantLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email = winner.Email, password = "Test-platform-password-123!" }, Ct);
         Assert.Equal(HttpStatusCode.Unauthorized, tenantLogin.StatusCode);
         var refreshes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync("/api/v1/platform/auth/refresh", new { refreshToken = pair.RefreshToken }, Ct)));
-        try { Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.OK); Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.Unauthorized); }
+        try { Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.OK); Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.Conflict); }
         finally { foreach (var response in refreshes) response.Dispose(); }
     }
 

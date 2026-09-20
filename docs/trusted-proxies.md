@@ -6,9 +6,14 @@ normalizado (`Trim().ToLowerInvariant()`). E-mails diferentes atrás do mesmo BF
 não dividem essa cota. O corpo JSON é limitado a 16 KiB e preservado para o controller;
 corpos maiores recebem 413. Credenciais não são registradas.
 
-Sem e-mail utilizável, e nos demais endpoints `auth` (incluindo refresh), a cota
-continua por IP. O limite global por usuário/IP permanece ativo (padrão 300/min),
-limitando também tentativas com e-mails variados. Não há confiança adicional em headers.
+Sem e-mail utilizável, e nos demais endpoints `auth`, a cota continua por IP.
+Refresh usa uma política separada, `RateLimiting:RefreshPermitLimit` (padrão 30/min),
+por SHA-256 do refresh token, sem normalizar seu conteúdo. Requisições sem token
+utilizável usam uma cota por IP nessa política. Assim, sessões diferentes atrás
+do BFF não dividem a cota de refresh nem consomem a cota de login.
+O limite global por usuário/IP permanece ativo (padrão 300/min), limitando também
+tentativas com e-mails ou tokens variados. Não há confiança adicional em headers.
+Respostas 429 incluem `Retry-After` quando disponibilizado pelo limiter.
 
 No Render Free, essa separação de cotas funciona via URL pública da API sem configurar
 proxies confiáveis: o IP disponível pode ser o do ingresso/BFF. O limite global continua

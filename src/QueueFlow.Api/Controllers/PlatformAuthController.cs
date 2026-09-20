@@ -12,8 +12,14 @@ public sealed class PlatformAuthController(PlatformAuthService auth) : Controlle
 {
     [HttpPost("login"), EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
-    [HttpPost("refresh"), EnableRateLimiting("auth")]
-    public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct) { var result = await auth.RefreshAsync(request.RefreshToken, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
+    [HttpPost("refresh"), EnableRateLimiting("refresh")]
+    public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct)
+    {
+        var result = await auth.RefreshAsync(request.RefreshToken, ct);
+        return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description,
+            statusCode: result.Error.Code == "platform.refresh_conflict" ? StatusCodes.Status409Conflict : StatusCodes.Status401Unauthorized,
+            extensions: new Dictionary<string, object?> { ["code"] = result.Error.Code });
+    }
     [HttpGet("me"), Authorize(Policy = "RequirePlatformAdmin")]
     public async Task<IActionResult> Me(CancellationToken ct) { var result = await auth.GetCurrentAsync(ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
 }

@@ -9,7 +9,7 @@ export default async function WorkstationPage() {
     getOperationContext(),
     getTodayAppointments(),
   ]);
-  if (session.status === 401 || operation.status === 401 || appointments.status === 401) redirect('/login');
+  if (session.status === 401 || operation.status === 401 || appointments.status === 401) redirect('/api/auth/refresh?returnTo=/workstation');
   if (session.status === 403 || operation.status === 403 || appointments.status === 403) {
     return <main className="login"><section className="card"><h1>Acesso não permitido</h1></section></main>;
   }

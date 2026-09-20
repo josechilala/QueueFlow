@@ -23,11 +23,26 @@ public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, 
     }
     public async Task<Result<TokenPair>> RefreshAsync(string refreshToken, CancellationToken ct)
     {
-        var hash = tokens.HashToken(refreshToken); var stored = await db.RefreshTokens.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
-        if (stored is null || !stored.IsActive(clock.UtcNow)) return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or has been reused."));
-        stored.Revoke(clock.UtcNow); var user = await db.Users.IgnoreQueryFilters().SingleAsync(x => x.Id == stored.UserId, ct);
-        if (!user.IsActive) { await db.SaveChangesAsync(ct); return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or has been reused.")); }
-        return await CreatePairAsync(user, ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        var hash = tokens.HashToken(refreshToken);
+        var stored = await db.RefreshTokens.FromSqlInterpolated($"SELECT * FROM \"RefreshTokens\" WHERE \"TokenHash\" = {hash} FOR UPDATE")
+            .IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+        if (stored is null || stored.ExpiresAt <= clock.UtcNow) return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or expired."));
+        var user = await db.Users.IgnoreQueryFilters().SingleAsync(x => x.Id == stored.UserId, ct);
+        if (!user.IsActive)
+        {
+            stored.Revoke(clock.UtcNow);
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid."));
+        }
+        // A stale concurrent request must not log out a session already rotated by another request.
+        // Never return credentials for a used token; this also works across API/BFF instances.
+        if (stored.RevokedAt is not null) return Result.Failure<TokenPair>(new("auth.refresh_conflict", "Refresh token has already been rotated."));
+        stored.Revoke(clock.UtcNow);
+        var result = await CreatePairAsync(user, ct);
+        await transaction.CommitAsync(ct);
+        return result;
     }
 
     public async Task<Result<AuthenticatedUser>> GetCurrentAsync(CancellationToken ct)

@@ -8,6 +8,7 @@ ENV NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL=$NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL
 ENV NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL=$NEXT_PUBLIC_QUEUEFLOW_DISPLAY_URL
 COPY package.json package-lock.json tsconfig.json ./
 COPY apps/admin-web apps/admin-web
+COPY packages/session packages/session
 RUN --mount=type=cache,target=/root/.npm npm config set fetch-retries 5 \
     && npm config set fetch-retry-mintimeout 20000 \
     && npm config set fetch-retry-maxtimeout 120000 \
