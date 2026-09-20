@@ -36,7 +36,7 @@ export function ActivationFlow({ token }: { token?: string }) {
       setStage('verify');
     }).catch(() => {
       if (!active || completed.current) return;
-      setMessage('Este convite n?o est? dispon?vel.');
+      setMessage('Este convite não está disponível.');
       setStage('error');
     });
     return () => { active = false; controller.abort(); };
@@ -62,10 +62,10 @@ export function ActivationFlow({ token }: { token?: string }) {
     try {
       const response = await post('request-code', { invitationToken: token });
       const data = await response.json().catch(() => null) as { developmentCode?: string; detail?: string } | null;
-      if (!response.ok) { setMessage(data?.detail ?? 'N?o foi poss?vel enviar o c?digo.'); return; }
+      if (!response.ok) { setMessage(data?.detail ?? 'Não foi possível enviar o código.'); return; }
       setDevCode(data?.developmentCode ?? '');
-      setMessage('Enviamos um c?digo para o e-mail do convite.');
-    } catch { setMessage('N?o foi poss?vel enviar o c?digo. Tente novamente.'); }
+      setMessage('Enviamos um código para o e-mail do convite.');
+    } catch { setMessage('Não foi possível enviar o código. Tente novamente.'); }
     finally { finish(); }
   }
 
@@ -76,11 +76,11 @@ export function ActivationFlow({ token }: { token?: string }) {
     try {
       const response = await post('verify', { invitationToken: token, code });
       const grant = await response.json().catch(() => null) as { activationAuthorization?: string } | null;
-      if (!response.ok || !grant?.activationAuthorization) { setMessage('C?digo inv?lido ou expirado.'); return; }
+      if (!response.ok || !grant?.activationAuthorization) { setMessage('Código inválido ou expirado.'); return; }
       setActivationAuthorization(grant.activationAuthorization);
       setStage('complete');
       setMessage('E-mail confirmado.');
-    } catch { setMessage('N?o foi poss?vel confirmar o c?digo. Tente novamente.'); }
+    } catch { setMessage('Não foi possível confirmar o código. Tente novamente.'); }
     finally { finish(); }
   }
 
@@ -111,46 +111,46 @@ export function ActivationFlow({ token }: { token?: string }) {
       }
       const data = await response.json().catch(() => null) as { detail?: string } | null;
       if (response.status === 404) { setActivationAuthorization(''); setStage('verify'); }
-      setMessage(data?.detail ?? 'N?o foi poss?vel concluir a ativa??o.');
+      setMessage(data?.detail ?? 'Não foi possível concluir a ativação.');
     } catch {
-      if (!completed.current) setMessage('N?o foi poss?vel confirmar o resultado da ativa??o. Verifique seu acesso ao Admin antes de tentar novamente.');
+      if (!completed.current) setMessage('Não foi possível confirmar o resultado da ativação. Verifique seu acesso ao Admin antes de tentar novamente.');
     } finally { finish(); }
   }
 
   const adminLogin = adminUrl ? adminUrl + '/login?activated=1' + (email ? '&email=' + encodeURIComponent(email) : '') : undefined;
   return <section className="activation-flow" aria-busy={pending}>
     {/* Keep panels and text containers mounted: stage changes never remove translated DOM nodes. */}
-    <div hidden={stage !== 'loading'}><p>Carregando convite?</p></div>
-    <div hidden={stage !== 'error'}><h1>Convite indispon?vel</h1></div>
+    <div hidden={stage !== 'loading'}><p>Carregando convite…</p></div>
+    <div hidden={stage !== 'error'}><h1>Convite indisponível</h1></div>
     <div hidden={stage !== 'verify' && stage !== 'complete'}>
-      <h1>Ative sua organiza??o</h1>
+      <h1>Ative sua organização</h1>
       <p><span>Convite para </span><strong>{invitation?.organizationName ?? 'sua empresa'}</strong><span>.</span></p>
-      <p className="muted"><span>Confirmaremos o e-mail </span><span>{invitation?.maskedEmail ?? ''}</span><span> antes da cria??o.</span></p>
+      <p className="muted"><span>Confirmaremos o e-mail </span><span>{invitation?.maskedEmail ?? ''}</span><span> antes da criação.</span></p>
     </div>
     <div hidden={stage !== 'verify'}>
-      <button type="button" onClick={requestCode} disabled={pending || stage !== 'verify' || !invitation?.canRequestVerificationCode}>Enviar c?digo</button>
-      <p className="muted" hidden={!devCode}><span>C?digo de desenvolvimento: </span><span>{devCode}</span></p>
+      <button type="button" onClick={requestCode} disabled={pending || stage !== 'verify' || !invitation?.canRequestVerificationCode}>Enviar código</button>
+      <p className="muted" hidden={!devCode}><span>Código de desenvolvimento: </span><span>{devCode}</span></p>
       <form className="booking-form" onSubmit={verify}>
-        <label><span>C?digo de 6 d?gitos</span><input name="code" inputMode="numeric" pattern="[0-9]{6}" required disabled={pending || stage !== 'verify'} /></label>
+        <label><span>Código de 6 dígitos</span><input name="code" inputMode="numeric" pattern="[0-9]{6}" required disabled={pending || stage !== 'verify'} /></label>
         <button type="submit" disabled={pending || stage !== 'verify'}>Confirmar e-mail</button>
       </form>
     </div>
     <div hidden={stage !== 'complete'}>
       <form className="booking-form" onSubmit={complete}>
         <label><span>Nome da empresa</span><input name="organizationName" value={organizationName} onChange={event => setOrganizationName(event.target.value)} required disabled={pending || stage !== 'complete'} /></label>
-        <label><span>Slug p?blico (opcional)</span><input name="slug" disabled={pending || stage !== 'complete'} /></label>
+        <label><span>Slug público (opcional)</span><input name="slug" disabled={pending || stage !== 'complete'} /></label>
         <label><span>Seu nome</span><input name="responsibleName" required disabled={pending || stage !== 'complete'} /></label>
         <label><span>Crie uma senha</span><input name="password" type="password" minLength={12} required disabled={pending || stage !== 'complete'} /></label>
-        <button type="submit" disabled={pending || stage !== 'complete'}>Ativar e entrar na configura??o</button>
+        <button type="submit" disabled={pending || stage !== 'complete'}>Ativar e entrar na configuração</button>
       </form>
     </div>
     <div hidden={stage !== 'done'} role="status">
       <h1>Conta ativada</h1>
-      <p>Sua organiza??o foi criada. Agora entre no painel administrativo com o e-mail convidado.</p>
+      <p>Sua organização foi criada. Agora entre no painel administrativo com o e-mail convidado.</p>
       <a className="service-action" hidden={!adminUrl} href={adminLogin}>Ir para o Admin</a>
-      <p hidden={!!adminUrl}>Endere?o do Admin n?o configurado.</p>
+      <p hidden={!!adminUrl}>Endereço do Admin não configurado.</p>
     </div>
-    <p className="muted" hidden={!pending} role="status">Processando?</p>
+    <p className="muted" hidden={!pending} role="status">Processando…</p>
     <p className="muted" hidden={!message || stage === 'done'} role="status"><span>{message}</span></p>
   </section>;
 }
