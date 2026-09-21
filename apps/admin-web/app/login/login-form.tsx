@@ -1,4 +1,5 @@
 'use client';
+import { safeReturnTo } from '../../../../packages/session/recovery';
 import { configuredUrl } from '../../lib/configured-url';
 
 
@@ -20,7 +21,7 @@ export function LoginForm() {
       window.location.assign(`${attendant}/login`);
       return;
     }
-    router.replace(body.needsOnboarding ? '/onboarding' : '/dashboard'); router.refresh();
+    router.replace(body.needsOnboarding ? '/onboarding' : safeReturnTo(search.get('returnTo'))); router.refresh();
   }
   return <form onSubmit={submit} className="login-form"><label>E-mail<input name="email" type="email" defaultValue={search.get('email') ?? ''} autoComplete="email" required autoFocus /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{error && <p className="form-error" role="alert">{error}</p>}<button type="submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar'}</button></form>;
 }

@@ -31,7 +31,7 @@ describe.each([
   ['platform', platformSession, 'queueflow_platform_access', 'queueflow_platform_refresh', 'platform.invalid_refresh', '/platform'],
   ['attendant', attendantSession, 'queueflow_attendant_access', 'queueflow_attendant_refresh', 'auth.invalid_refresh', '/workstation'],
 ] as const)('%s session', (_, session, accessCookie, refreshCookie, code, home) => {
-  beforeEach(() => jar.set(refreshCookie, `old-refresh-${++sequence}`));
+  beforeEach(() => { jar.set(refreshCookie, `old-refresh-${++sequence}`); if (session === tenantSession) jar.set('queueflow_refresh_attempt', `proof-${sequence}`); });
 
   it('renews an expired access cookie and persists both secure cookie attributes', async () => {
     const fetch = mockFetch(Response.json(pair));
@@ -97,18 +97,47 @@ describe.each([
     }
   });
 
-  it('does not cache temporary errors, allowing recovery on the next attempt', async () => {
+  it('holds temporary errors during cooldown then allows recovery', async () => {
+    vi.useFakeTimers();
     const fetch = mockFetch(new Response(null, { status: 502 }), Response.json(pair));
     expect((await session.refresh(request())).status).toBe(502);
+    expect((await session.refresh(request())).status).toBe(502);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_001);
     expect((await session.refresh(request())).status).toBe(303);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('respects Retry-After across repeated and concurrent attempts', async () => {
+    vi.useFakeTimers();
+    const fetch = mockFetch(new Response(null, { status: 429, headers: { 'Retry-After': '60' } }), Response.json(pair));
+    await session.refresh(request());
+    await vi.advanceTimersByTimeAsync(10_000);
+    const responses = await Promise.all(Array.from({ length: 8 }, () => session.refresh(request())));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    for (const response of responses) {
+      expect(response.status).toBe(429);
+      expect(response.headers.get('retry-after')).toBe('50');
+      expect(response.headers.has('set-cookie')).toBe(false);
+    }
+    await vi.advanceTimersByTimeAsync(50_001);
+    expect((await session.refresh(request())).status).toBe(303);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('exposes a conflict without returning credentials or clearing the winner cookies', async () => {
+    mockFetch(Response.json({ code: code.replace('invalid_refresh', 'refresh_conflict') }, { status: 409 }));
+    const response = await session.refresh(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: 'refresh_conflict' });
+    expect(response.headers.has('set-cookie')).toBe(false);
   });
 
   it('bounds the successful rotation cache and never accepts a subsequent API replay conflict', async () => {
     vi.useFakeTimers();
     const fetch = mockFetch(Response.json(pair), new Response(null, { status: 409 }));
     expect((await session.refresh(request())).status).toBe(303);
-    await vi.advanceTimersByTimeAsync(5_001);
+    await vi.advanceTimersByTimeAsync(session === tenantSession ? 60_001 : 5_001);
     const late = await session.refresh(request());
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(late.status).toBe(503);
@@ -199,4 +228,21 @@ it.each([
   expect(response.status).toBe(429);
   expect(response.headers.get('retry-after')).toBe('20');
   expect(response.headers.has('set-cookie')).toBe(false);
+});
+
+it('recovers a lost response with browser proof but not with the old token alone', async () => {
+  vi.useFakeTimers();
+  jar.set('queueflow_refresh', `lost-${++sequence}`);
+  jar.set('queueflow_refresh_attempt', 'separate-browser-proof');
+  const fetch = mockFetch(Response.json(pair), Response.json({ code: 'auth.refresh_conflict' }, { status: 409 }));
+  await tenantSession.refresh(request());
+  await vi.advanceTimersByTimeAsync(10_000);
+  const recovered = await tenantSession.refresh(request());
+  expect(recovered.cookies.get('queueflow_refresh')?.value).toBe(pair.refreshToken);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  jar.delete('queueflow_refresh_attempt');
+  const replay = await tenantSession.refresh(request());
+  expect(replay.status).toBe(503);
+  expect(replay.headers.has('set-cookie')).toBe(false);
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

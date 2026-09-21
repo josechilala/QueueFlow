@@ -17,6 +17,8 @@ public interface ITokenService
     string CreateAccessToken(Guid userId, Guid organizationId, UserRole role, string email);
     string CreatePlatformAccessToken(Guid platformUserId, string email);
     string CreateRefreshToken();
+    string CreateRefreshToken(Guid userId, IdentityType identityType);
+    Guid? GetRefreshRateLimitIdentity(string token, IdentityType identityType);
     string HashToken(string token);
 }
 

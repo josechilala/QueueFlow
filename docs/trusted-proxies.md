@@ -8,16 +8,15 @@ corpos maiores recebem 413. Credenciais não são registradas.
 
 Sem e-mail utilizável, e nos demais endpoints `auth`, a cota continua por IP.
 Refresh usa uma política separada, `RateLimiting:RefreshPermitLimit` (padrão 30/min),
-por SHA-256 do refresh token, sem normalizar seu conteúdo. Requisições sem token
-utilizável usam uma cota por IP nessa política. Assim, sessões diferentes atrás
-do BFF não dividem a cota de refresh nem consomem a cota de login.
-O limite global por usuário/IP permanece ativo (padrão 300/min), limitando também
-tentativas com e-mails ou tokens variados. Não há confiança adicional em headers.
-Respostas 429 incluem `Retry-After` quando disponibilizado pelo limiter.
+por identidade verificável nos novos tokens assinados. Tokens opacos antigos
+continuam por SHA-256 do token até sua renovação; entradas sem token usam IP.
+O limite global permanece em 300/min por padrão, com identidade assinada para
+refresh e usuário autenticado/IP nos demais casos. Tokens forjados continuam
+sujeitos à cota global por IP. Respostas 429 incluem `Retry-After`.
 
-No Render Free, essa separação de cotas funciona via URL pública da API sem configurar
-proxies confiáveis: o IP disponível pode ser o do ingresso/BFF. O limite global continua
-compartilhado por esse IP, e a solução não pretende descobrir o IP real do navegador.
+No Render Free, essa separação de cotas funciona pela URL pública da API sem
+depender do IP real do navegador. Requisições anônimas e tokens opacos antigos
+ainda compartilham o limite global pelo IP disponível do ingresso/BFF.
 
 ## Admin BFF
 
@@ -59,3 +58,28 @@ confiança, é necessário um ingresso controlado antes de habilitar o encaminha
 
 Referências: [Next custom server](https://nextjs.org/docs/app/guides/custom-server)
 e [ASP.NET Core forwarded headers](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0).
+
+
+## Identidade verificável no refresh
+
+Novos refresh tokens carregam um envelope HMAC com propósito próprio, identidade
+tenant/platform, usuário, validade e 64 bytes aleatérios. O envelope NÃO é um
+access token e NÃO autoriza operações: a API ainda exige o hash exato persistido,
+usuário ativo, validade e rotação única sob `FOR UPDATE`.
+
+Somente assinatura e validade verificadas permitem escolher as cotas global e
+refresh por identidade, independentemente do IP do BFF. Rotações e novos logins
+do mesmo usuário não reiniciam essas cotas. Os limites continuam 300/min global,
+30/min refresh e 10/min login por padrão. Assinaturas falsas, identidades de outro
+propósito e entradas malformadas continuam na proteção global por IP. Não há
+consulta ao banco antes do limiter, nem confiança em headers enviados pelo cliente.
+
+Compatibilidade: tokens opacos já emitidos continuam funcionando sob as cotas
+anteriores por IP/token até a primeira renovação ou novo login, quando recebem
+o novo formato. Nenhuma migration ou invalidação geral de sessões é necessária.
+A API deve ser implantada antes de avaliar a separação das cotas em sessões novas;
+issuer, audience e chave JWT devem permanecer consistentes entre instâncias.
+
+Toda rejeição registra política (`global`, `auth`, `refresh` ou `public`) e
+correlation ID, sem a chave da partição, IP, e-mail ou tokens. A resposta informa
+`X-RateLimit-Policy` e `Retry-After`, permitindo distinguir os limites nos logs.

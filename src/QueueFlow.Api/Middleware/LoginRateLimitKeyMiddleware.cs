@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using QueueFlow.Api.Controllers;
+using QueueFlow.Application.Abstractions.Authentication;
+using QueueFlow.Domain.Enums;
 
 namespace QueueFlow.Api.Middleware;
 
@@ -11,8 +13,14 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
     private const int MaxBodyBytes = 16 * 1024;
     private static readonly object EmailHashKey = new();
     private static readonly object RefreshHashKey = new();
+    private static readonly object RefreshIdentityKey = new();
 
-    public static string RefreshPartitionKey(HttpContext context) => context.Items.TryGetValue(RefreshHashKey, out var hash)
+    public static string GlobalPartitionKey(HttpContext context) =>
+        context.Items.TryGetValue(RefreshIdentityKey, out var identity) ? $"refresh-user:{identity}" :
+        context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    public static string RefreshPartitionKey(HttpContext context) => context.Items.TryGetValue(RefreshIdentityKey, out var identity)
+        ? $"refresh-user:{identity}" : context.Items.TryGetValue(RefreshHashKey, out var hash)
         ? $"refresh:{hash}" : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 
     public static string PartitionKey(HttpContext context)
@@ -60,6 +68,12 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
                     {
                         var normalized = isRefresh ? email.GetString()! : email.GetString()!.Trim().ToLowerInvariant();
                         context.Items[isRefresh ? RefreshHashKey : EmailHashKey] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+                        if (isRefresh)
+                        {
+                            var kind = action.ControllerTypeInfo.AsType() == typeof(PlatformAuthController) ? IdentityType.Platform : IdentityType.Tenant;
+                            var userId = context.RequestServices?.GetService<ITokenService>()?.GetRefreshRateLimitIdentity(normalized, kind);
+                            if (userId is not null) context.Items[RefreshIdentityKey] = $"{kind}:{userId:N}";
+                        }
                     }
                 }
             }

@@ -137,14 +137,15 @@ builder.Services.AddRateLimiter(options =>
     {
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
             context.HttpContext.Response.Headers.RetryAfter = Math.Ceiling(retryAfter.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        RateLimitDiagnostics.Rejected(context.HttpContext);
         return ValueTask.CompletedTask;
     };
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => RateLimitPartition.GetFixedWindowLimiter(
-        context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        RateLimitDiagnostics.Partition(context, "global", LoginRateLimitKeyMiddleware.GlobalPartitionKey(context)),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = globalPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("public", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions { PermitLimit = publicPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(LoginRateLimitKeyMiddleware.PartitionKey(context), _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("refresh", context => RateLimitPartition.GetFixedWindowLimiter(LoginRateLimitKeyMiddleware.RefreshPartitionKey(context), _ => new FixedWindowRateLimiterOptions { PermitLimit = refreshPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("public", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "public", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions { PermitLimit = publicPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "auth", LoginRateLimitKeyMiddleware.PartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("refresh", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "refresh", LoginRateLimitKeyMiddleware.RefreshPartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = refreshPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 builder.Services
     .AddHealthChecks()
