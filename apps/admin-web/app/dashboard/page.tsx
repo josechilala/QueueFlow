@@ -1,4 +1,4 @@
-import { getOnboardingProgress } from '../../lib/server-onboarding';
+import { queueStatusLabel } from '../../lib/queues';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { AdminShell } from '../../components/admin-shell';
@@ -19,7 +19,6 @@ export default async function DashboardPage() {
   if (sessionFailure === 'forbidden') return <Forbidden message="Sua conta não possui permissão para acessar o painel administrativo." />;
   if (!session.user) throw new Error('Não foi possível validar a sessão administrativa.');
 
-  if (session.user.role === 'Owner' && !(await getOnboardingProgress()).completed) redirect('/onboarding');
   const dashboard = await getDashboardSummary();
   const dashboardFailure = authFailure(dashboard.status);
   if (dashboardFailure === 'unauthorized') redirect('/api/auth/refresh?returnTo=/dashboard');
@@ -30,26 +29,29 @@ export default async function DashboardPage() {
   const canShareAccess = canViewAccessLinks(session.user.role);
   const accessLinks = getOrganizationAccessLinks(getConfiguredAccessOrigins(), summary.organizationSlug);
   const metrics = [
-    { label: 'Filas ativas', value: summary.activeQueues.toLocaleString('pt-BR') },
-    { label: 'Aguardando', value: summary.waiting.toLocaleString('pt-BR') },
-    { label: 'Espera média', value: `${Math.round(summary.averageWaitMinutes)} min` },
-    { label: 'Atendidos hoje', value: summary.completedToday.toLocaleString('pt-BR') },
+    { label: 'Filas abertas', value: summary.activeQueues },
+    { label: 'Clientes aguardando', value: summary.waiting },
+    { label: 'Clientes em atendimento', value: summary.inService },
+    { label: 'Agendamentos de hoje', value: summary.appointmentsToday },
+    { label: 'Próximos agendamentos', value: summary.upcomingAppointments },
+    { label: 'Unidades ativas', value: summary.activeBranches },
   ];
 
   return <AdminShell user={session.user}>
     <RealtimeRefresh />
-    {session.user.role === 'Owner' && <Link href="/onboarding">Configuração inicial da operação</Link>}
+    <div className="page-heading"><h1>Visão geral</h1><p className="muted">Acompanhe as filas, os atendimentos e os agendamentos da sua empresa.</p></div>
     {canShareAccess && <AccessLinks title="Links de acesso" links={accessLinks} />}
     <section className="metric-grid" aria-label="Resumo operacional">
-      {metrics.map(metric => <article className="metric-card" key={metric.label}><p>{metric.label}</p><strong>{metric.value}</strong></article>)}
+      {metrics.map(metric => <article className="metric-card" key={metric.label}><p>{metric.label}</p><strong>{metric.value.toLocaleString('pt-BR')}</strong></article>)}
     </section>
+    <p className="muted">Agendamentos de hoje consideram o fuso de cada reserva, exceto cancelados e reagendados. Próximos agendamentos são reservas futuras pendentes ou confirmadas.</p>
     {hasOperationalData(summary)
       ? <article className="notice"><h3>Dados carregados</h3><p>Indicadores consultados diretamente na API. Última atualização: {new Date(summary.generatedAt).toLocaleString('pt-BR')}.</p></article>
       : <article className="notice empty-state"><h3>Ainda não há dados operacionais</h3><p>Os indicadores permanecerão zerados até existirem filas e atendimentos cadastrados.</p></article>}
-    <div className="section-heading"><div><h3>Filas em andamento</h3><p className="muted">Situação operacional atual das filas abertas ou pausadas.</p></div></div>
-    {summary.queuesInProgress.length === 0
-      ? <article className="notice empty-state"><p>Nenhuma fila está em andamento.</p></article>
-      : <div className="table-wrap"><table><thead><tr><th>Fila</th><th>Unidade</th><th>Serviço</th><th>Status</th><th>Aguardando</th><th>Estimativa</th><th></th></tr></thead><tbody>{summary.queuesInProgress.map(queue => <tr key={queue.id}><td>{queue.name}</td><td>{queue.branchName}</td><td>{queue.serviceName}</td><td><span className={`status queue-${queue.status.toLowerCase()}`}>{queue.status === 'Open' ? 'Aberta' : 'Pausada'}</span></td><td>{queue.waiting}</td><td>{queue.estimatedWaitMinutes} min</td><td><Link href={`/queues/${queue.id}`}>Visualizar</Link></td></tr>)}</tbody></table></div>}
+    <div className="section-heading"><div><h3>Resumo das filas</h3><p className="muted">Unidade, serviço e situação atual de cada fila cadastrada.</p></div></div>
+    {summary.queues.length === 0
+      ? <article className="notice empty-state"><p>Nenhuma fila cadastrada.</p></article>
+      : <div className="table-wrap"><table><thead><tr><th>Fila</th><th>Unidade</th><th>Serviço</th><th>Status</th><th>Aguardando</th><th></th></tr></thead><tbody>{summary.queues.map(queue => <tr key={queue.id}><td>{queue.name}</td><td>{queue.branchName}</td><td>{queue.serviceName}</td><td><span className={`status queue-${queue.status.toLowerCase()}`}>{queueStatusLabel[queue.status]}</span></td><td>{queue.waiting}</td><td><Link href={`/queues/${queue.id}`}>Visualizar</Link></td></tr>)}</tbody></table></div>}
   </AdminShell>;
 }
 

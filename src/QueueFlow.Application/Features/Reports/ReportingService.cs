@@ -9,7 +9,7 @@ namespace QueueFlow.Application.Features.Reports;
 
 public sealed record OperationalReport(int Waiting, int Called, int InService, int Completed, int Cancelled, double AverageWaitMinutes, double AverageServiceMinutes);
 public sealed record QueueDashboardItem(Guid Id, string Name, string BranchName, string ServiceName, QueueStatus Status, int Waiting, int ActiveAttendants, int EstimatedWaitMinutes);
-public sealed record AdministrativeDashboardSummary(string OrganizationSlug, int ActiveQueues, int Waiting, int CompletedToday, double AverageWaitMinutes, DateTimeOffset GeneratedAt, IReadOnlyList<QueueDashboardItem> QueuesInProgress);
+public sealed record AdministrativeDashboardSummary(string OrganizationSlug, int ActiveQueues, int Waiting, int CompletedToday, double AverageWaitMinutes, DateTimeOffset GeneratedAt, IReadOnlyList<QueueDashboardItem> QueuesInProgress, int InService, int AppointmentsToday, int UpcomingAppointments, int ActiveBranches, IReadOnlyList<QueueDashboardItem> Queues);
 public sealed record ReportBreakdownItem(Guid Id, string Name, int Volume);
 public sealed record DailyVolumeItem(DateOnly Date, int Volume);
 public sealed record HourlyVolumeItem(int Hour, int Volume);
@@ -26,8 +26,26 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
             .Select(x => x.Slug)
             .SingleAsync(ct);
         var startOfTodayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
-        var activeQueues = await db.Queues.AsNoTracking().CountAsync(x => x.Status == QueueStatus.Open, ct);
+        var activeQueues = await db.Queues.AsNoTracking().CountAsync(x => x.IsActive && x.Status == QueueStatus.Open, ct);
         var waiting = await db.QueueTickets.AsNoTracking().CountAsync(x => x.Status == TicketStatus.Waiting, ct);
+        var inService = await db.QueueTickets.AsNoTracking().CountAsync(x => x.Status == TicketStatus.InService, ct);
+        var activeBranches = await db.Branches.AsNoTracking().CountAsync(x => x.IsActive, ct);
+        var upcomingAppointments = await db.Appointments.AsNoTracking().CountAsync(x =>
+            x.ScheduledStart > now && (x.Status == AppointmentStatus.Scheduled || x.Status == AppointmentStatus.Confirmed), ct);
+        // Each reservation retains the timezone used when the customer booked it.
+        // Count in SQL without the administrative list's 500-row limit.
+        var appointmentsToday = 0;
+        var timeZones = await db.Appointments.AsNoTracking().Select(x => x.TimeZone).Distinct().ToListAsync(ct);
+        foreach (var timeZoneId in timeZones)
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+            var localDate = TimeZoneInfo.ConvertTime(now, zone).Date;
+            var dayStart = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified), zone));
+            var dayEnd = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localDate.AddDays(1), DateTimeKind.Unspecified), zone));
+            appointmentsToday += await db.Appointments.AsNoTracking().CountAsync(x =>
+                x.TimeZone == timeZoneId && x.ScheduledStart >= dayStart && x.ScheduledStart < dayEnd &&
+                x.Status != AppointmentStatus.Cancelled && x.Status != AppointmentStatus.Rescheduled, ct);
+        }
         var completedToday = db.QueueTickets.AsNoTracking().Where(x => x.CompletedAt >= startOfTodayUtc);
         var completedCount = await completedToday.CountAsync(ct);
         var completedWaits = await completedToday
@@ -39,9 +57,8 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
             : completedWaits.Average(x => (x.CalledAt!.Value - x.IssuedAt).TotalMinutes);
 
         var queueRows = await db.Queues.AsNoTracking()
-            .Where(x => x.IsActive && (x.Status == QueueStatus.Open || x.Status == QueueStatus.Paused))
             .OrderBy(x => x.Name)
-            .Select(x => new { x.Id, x.BranchId, x.ServiceId, x.Name, x.Status })
+            .Select(x => new { x.Id, x.BranchId, x.ServiceId, x.Name, x.Status, x.IsActive })
             .ToListAsync(ct);
         var queueIds = queueRows.Select(x => x.Id).ToArray();
         var branchIds = queueRows.Select(x => x.BranchId).Distinct().ToArray();
@@ -50,7 +67,7 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
         var services = await db.Services.AsNoTracking().Where(x => serviceIds.Contains(x.Id)).Select(x => new { x.Id, x.Name, x.AverageDurationMinutes }).ToDictionaryAsync(x => x.Id, ct);
         var waitingByQueue = await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.Status == TicketStatus.Waiting).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
         var attendantsByQueue = await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.AttendantUserId != null && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService)).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Select(x => x.AttendantUserId).Distinct().Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
-        var queuesInProgress = queueRows.Select(queue =>
+        var queues = queueRows.Select(queue =>
         {
             var waitingForQueue = waitingByQueue.GetValueOrDefault(queue.Id);
             var activeAttendants = attendantsByQueue.GetValueOrDefault(queue.Id);
@@ -59,7 +76,10 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
             return new QueueDashboardItem(queue.Id, queue.Name, branchNames[queue.BranchId], service.Name, queue.Status, waitingForQueue, activeAttendants, estimate);
         }).ToList();
 
-        return new(organizationSlug, activeQueues, waiting, completedCount, averageWait, now, queuesInProgress);
+        var activeQueueIds = queueRows.Where(x => x.IsActive && (x.Status == QueueStatus.Open || x.Status == QueueStatus.Paused)).Select(x => x.Id).ToHashSet();
+        var queuesInProgress = queues.Where(x => activeQueueIds.Contains(x.Id)).ToList();
+        return new(organizationSlug, activeQueues, waiting, completedCount, averageWait, now, queuesInProgress,
+            inService, appointmentsToday, upcomingAppointments, activeBranches, queues);
     }
 
     public async Task<OperationalReport> GetAsync(DateTimeOffset from, CancellationToken ct)

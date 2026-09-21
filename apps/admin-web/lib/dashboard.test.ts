@@ -4,6 +4,11 @@ import { hasOperationalData, type DashboardSummary } from './dashboard';
 const emptySummary: DashboardSummary = {
   organizationSlug: 'queueflow-local',
   activeQueues: 0,
+  inService: 0,
+  appointmentsToday: 0,
+  upcomingAppointments: 0,
+  activeBranches: 0,
+  queues: [],
   waiting: 0,
   completedToday: 0,
   averageWaitMinutes: 0,
@@ -19,4 +24,8 @@ describe('hasOperationalData', () => {
   it('identifies a dashboard backed by operational data', () => {
     expect(hasOperationalData({ ...emptySummary, waiting: 1 })).toBe(true);
   });
+});
+
+it.each(['inService', 'appointmentsToday', 'upcomingAppointments', 'activeBranches'] as const)('recognizes operational data from %s', key => {
+  expect(hasOperationalData({ ...emptySummary, [key]: 1 })).toBe(true);
 });

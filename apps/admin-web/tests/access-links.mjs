@@ -12,7 +12,7 @@ const branchId = '0123456789abcdef0123456789abcdef';
 const api = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json');
   if (request.url === '/api/v1/auth/me') return response.end(JSON.stringify({ userId: 'user', organizationId: 'organization', name: 'Owner', email: 'owner@test.local', role: 'Owner' }));
-  if (request.url === '/api/v1/dashboard') return response.end(JSON.stringify({ organizationSlug: 'empresa-teste', activeQueues: 0, waiting: 0, completedToday: 0, averageWaitMinutes: 0, generatedAt: new Date().toISOString(), queuesInProgress: [] }));
+  if (request.url === '/api/v1/dashboard') return response.end(JSON.stringify({ organizationSlug: 'empresa-teste', inService: 0, appointmentsToday: 0, upcomingAppointments: 0, activeBranches: 0, queues: [], activeQueues: 0, waiting: 0, completedToday: 0, averageWaitMinutes: 0, generatedAt: new Date().toISOString(), queuesInProgress: [] }));
   if (request.url === '/api/v1/branches/branch-record') return response.end(JSON.stringify({ id: 'branch-record', publicId: branchId, name: 'Unidade Centro', address: null, timeZone: 'UTC', isActive: true }));
   response.statusCode = 404;
   response.end('{}');
