@@ -1,3 +1,4 @@
+import { formatAppointmentDateTime } from '../../../lib/appointment-time';
 import { RealtimeRefresh } from '../../../components/realtime-refresh';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -29,7 +30,7 @@ export default async function AppointmentPage({ params }: { params: Promise<{ id
     <section className="notice appointment-details">
       <h3>Rastreabilidade da reserva</h3>
       <dl>
-        <div><dt>Data do atendimento</dt><dd>{new Date(item.scheduledStart).toLocaleString('pt-BR')}</dd></div>
+        <div><dt>Data do atendimento</dt><dd>{formatAppointmentDateTime(item.scheduledStart, item.timeZone)}</dd></div>
         <div><dt>Status</dt><dd>{item.status}</dd></div>
         <div><dt>Criado em</dt><dd>{new Date(item.createdAt).toLocaleString('pt-BR')}</dd></div>
         <div><dt>Origem</dt><dd>{appointmentOriginLabel[item.origin]}</dd></div>

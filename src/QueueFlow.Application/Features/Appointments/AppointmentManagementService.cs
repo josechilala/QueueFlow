@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace QueueFlow.Application.Features.Appointments;
 
-public sealed record AppointmentListItemDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, DateTimeOffset CreatedAt, string Origin);
+public sealed record AppointmentListItemDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, DateTimeOffset CreatedAt, string Origin, string TimeZone);
 public sealed record AppointmentNotificationTraceDto(int Generated, int Pending, int Sent, int Failed, DateTimeOffset? LastSentAt);
 public sealed record AppointmentDetailsDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, string ConfirmationCode, string PublicToken, string? Notes, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, Guid? QueueTicketId, DateTimeOffset CreatedAt, string Origin, Guid? CreatedByUserId, string CreatedBy, AppointmentNotificationTraceDto Notifications, IReadOnlyList<AppointmentHistoryDto> History);
 public sealed record AppointmentHistoryDto(AppointmentStatus PreviousStatus, AppointmentStatus NewStatus, string? Reason, DateTimeOffset CreatedAt);
@@ -27,7 +27,7 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
                     join service in db.Services.AsNoTracking() on appointment.ServiceId equals service.Id
                     where (start == null || appointment.ScheduledStart >= start) && (end == null || appointment.ScheduledStart < end) && (status == null || appointment.Status == status) && (branchId == null || appointment.BranchId == branchId) && (serviceId == null || appointment.ServiceId == serviceId)
                     orderby appointment.ScheduledStart
-                    select new AppointmentListItemDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.BranchId, branch.Name, appointment.ServiceId, service.Name, appointment.CreatedAt, appointment.CreatedByUserId == null ? "PublicPortal" : "AdminPanel");
+                    select new AppointmentListItemDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.BranchId, branch.Name, appointment.ServiceId, service.Name, appointment.CreatedAt, appointment.CreatedByUserId == null ? "PublicPortal" : "AdminPanel", appointment.TimeZone);
         return await query.Take(500).ToListAsync(cancellationToken);
     }
 
