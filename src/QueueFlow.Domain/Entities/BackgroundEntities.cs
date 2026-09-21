@@ -17,6 +17,8 @@ public sealed class OutboxMessage : AuditableEntity, ITenantEntity
     public DateTimeOffset NextAttemptAt { get; private set; }
     public DateTimeOffset? ProcessedAt { get; private set; }
     public string? LastError { get; private set; }
+    public void PrepareDelivery(string payload, DateTimeOffset now) { Payload = payload; MarkUpdated(now); }
+    public void SuspendDelivery(string error, DateTimeOffset now) { LastError = error; NextAttemptAt = DateTimeOffset.MaxValue; MarkUpdated(now); }
     public void MarkProcessed(DateTimeOffset now) { ProcessedAt = now; LastError = null; MarkUpdated(now); }
     public void MarkFailed(string error, DateTimeOffset now) { Attempts++; LastError = string.IsNullOrWhiteSpace(error) ? "Unknown delivery error." : error[..Math.Min(error.Length, 1000)]; NextAttemptAt = now.AddSeconds(Math.Pow(2, Math.Min(Attempts, 10))); MarkUpdated(now); }
 }

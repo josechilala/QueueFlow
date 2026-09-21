@@ -12,7 +12,9 @@ public sealed class AppointmentBookingService(IAppointmentOperations operations)
 {
     public async Task<Result<CreatedAppointmentDto>> CreateAsync(CreatePublicAppointment request, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.CustomerName) || request.CustomerName.Trim().Length > 200 || request.CustomerEmail?.Trim().Length > 320 || request.CustomerPhone?.Trim().Length > 30)
+        if (!AppointmentReceipt.IsValidEmail(request.CustomerEmail))
+            return Result.Failure<CreatedAppointmentDto>(new("appointments.invalid_email", "Informe um e-mail válido para receber o comprovante."));
+        if (string.IsNullOrWhiteSpace(request.CustomerName) || request.CustomerName.Trim().Length > 200 || request.CustomerPhone?.Trim().Length > 30)
             return Result.Failure<CreatedAppointmentDto>(new("appointments.invalid_customer", "Confira os dados informados para o agendamento."));
         try
         {

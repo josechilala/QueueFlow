@@ -25,7 +25,8 @@ public sealed class PublicAppointmentsController(IAppointmentAvailabilityService
     public async Task<IActionResult> Create(CreatePublicAppointment request, CancellationToken cancellationToken)
     {
         var result = await booking.CreateAsync(request, cancellationToken);
-        return result.IsSuccess ? StatusCode(StatusCodes.Status201Created, result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status409Conflict);
+        return result.IsSuccess ? StatusCode(StatusCodes.Status201Created, result.Value) : Problem(result.Error.Description,
+            statusCode: result.Error.Code == "appointments.invalid_email" ? StatusCodes.Status400BadRequest : StatusCodes.Status409Conflict);
     }
 
     [HttpGet("appointments/{publicToken}"), EnableRateLimiting("public")]

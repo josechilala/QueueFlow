@@ -1,4 +1,6 @@
 using System.Text.Json;
+using QueueFlow.Application.Features.Appointments;
+using QueueFlow.Infrastructure.Notifications;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,7 +13,7 @@ using QueueFlow.Application.Observability;
 
 namespace QueueFlow.Infrastructure.Jobs;
 
-internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogger<OutboxProcessor> logger, bool queueEventsOnly = false) : BackgroundService
+internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogger<OutboxProcessor> logger, bool queueEventsOnly = false, bool receiptsOnly = false) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,7 +26,7 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
         }
     }
 
-    private async Task ProcessBatchAsync(CancellationToken ct)
+    internal async Task ProcessBatchAsync(CancellationToken ct)
     {
         for (var index = 0; index < 50; index++)
         {
@@ -32,11 +34,24 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var clock = scope.ServiceProvider.GetRequiredService<IClock>();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            var message = await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE (\"Type\" IN ('ticket.realtime', 'appointment.realtime')) = {queueEventsOnly} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+            var message = receiptsOnly
+                ? await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE \"Type\" = {AppointmentReceipt.OutboxType} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct)
+                : await db.OutboxMessages.FromSqlInterpolated($"SELECT * FROM \"OutboxMessages\" WHERE (\"Type\" IN ('ticket.realtime', 'appointment.realtime')) = {queueEventsOnly} AND \"ProcessedAt\" IS NULL AND \"NextAttemptAt\" <= {clock.UtcNow} ORDER BY \"CreatedAt\" FOR UPDATE SKIP LOCKED LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(ct);
             if (message is null) { await transaction.RollbackAsync(ct); break; }
             try
             {
-                if (message.Type == "notification.dispatch")
+                if (message.Type == AppointmentReceipt.OutboxType)
+                {
+                    var sender = scope.ServiceProvider.GetRequiredService<AppointmentReceiptSender>();
+                    if (sender.Prepare(message, clock.UtcNow))
+                    {
+                        await db.SaveChangesAsync(ct);
+                        await transaction.CommitAsync(ct);
+                        continue;
+                    }
+                    await sender.DeliverAsync(message, clock.UtcNow, ct);
+                }
+                else if (message.Type == "notification.dispatch")
                 {
                     var notificationId = JsonDocument.Parse(message.Payload).RootElement.GetProperty("notificationId").GetGuid();
                     var notification = await db.Notifications.IgnoreQueryFilters().SingleAsync(x => x.Id == notificationId && x.OrganizationId == message.OrganizationId, ct);
@@ -62,11 +77,11 @@ internal sealed partial class OutboxProcessor(IServiceScopeFactory scopes, ILogg
                     foreach (var queueId in queueIds) await realtime.QueueEventAsync(queueId, eventName, new { servicePublicId }, ct);
                 }
                 else throw new InvalidOperationException($"Unsupported outbox type '{message.Type}'.");
-                message.MarkProcessed(clock.UtcNow);
+                if (message.Type != AppointmentReceipt.OutboxType) message.MarkProcessed(clock.UtcNow);
             }
             catch (Exception exception)
             {
-                if (message.Type == "notification.dispatch") QueueFlowTelemetry.NotificationFailures.Add(1);
+                if (message.Type is "notification.dispatch" or AppointmentReceipt.OutboxType) QueueFlowTelemetry.NotificationFailures.Add(1);
                 message.MarkFailed(exception.GetType().Name, clock.UtcNow);
                 var notificationId = TryGetNotificationId(message.Payload);
                 if (notificationId is Guid id)

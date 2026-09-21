@@ -1,21 +1,12 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Net.Mail;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 using QueueFlow.Application.Abstractions.Notifications;
 
 namespace QueueFlow.Infrastructure.Notifications;
 
-internal sealed class ActivationEmailSender(IHostEnvironment environment, IOptions<ResendOptions> options, IHttpClientFactory clients) : IActivationEmailSender
+internal sealed class ActivationEmailSender(IHostEnvironment environment, ResendEmailTransport transport) : IActivationEmailSender
 {
-    internal const string HttpClientName = "ResendActivation";
     private bool Simulated => environment.IsDevelopment() || environment.IsEnvironment("Test");
-    private readonly string _apiKey = options.Value.ApiKey?.Trim() ?? string.Empty;
-    private bool ApiKeyValidFormat => _apiKey.Length > 0 && !_apiKey.Any(char.IsWhiteSpace);
-    private bool FromPresent => !string.IsNullOrWhiteSpace(options.Value.From);
-    private bool FromValidFormat => FromPresent && !options.Value.From.Any(char.IsControl) && MailAddress.TryCreate(options.Value.From, out _);
-    private bool HasResendConfiguration => ApiKeyValidFormat && FromValidFormat;
+    private bool HasResendConfiguration => transport.IsConfigured;
 
     public bool IsConfigured => Simulated || HasResendConfiguration;
     public bool SupportsInvitationDelivery => !Simulated && HasResendConfiguration;
@@ -35,21 +26,6 @@ internal sealed class ActivationEmailSender(IHostEnvironment environment, IOptio
             $"Você recebeu um convite para o QueueFlow. Acesse o link para ativar sua conta:\n\n{activationUrl}\n\nSe você não esperava este convite, ignore este e-mail.", cancellationToken);
     }
 
-    private async Task SendAsync(string email, string subject, string text, CancellationToken cancellationToken)
-    {
-        using var client = clients.CreateClient(HttpClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.resend.com/emails");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-        request.Content = JsonContent.Create(new { from = options.Value.From, to = new[] { email }, subject, text });
-        try
-        {
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            // Provider bodies can echo recipients or secrets. Never log or propagate them.
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Activation email delivery failed.");
-        }
-        catch (HttpRequestException)
-        {
-            throw new InvalidOperationException("Activation email delivery failed.");
-        }
-    }
+    private Task SendAsync(string email, string subject, string text, CancellationToken cancellationToken) =>
+        transport.SendAsync(new ResendEmail(transport.From, [email], subject, text), null, cancellationToken);
 }

@@ -37,10 +37,11 @@ try {
   await page.route('**/api/appointments', async route => { booking = route.request().postDataJSON(); await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ publicToken: 'confirmation' }) }); });
   await page.route('**/meu-agendamento/confirmation', route => route.fulfill({ contentType: 'text/html', body: '<h1>Confirmed</h1>' }));
   await page.locator('input[name="customerName"]').fill('Test Customer');
+  await page.locator('input[name="customerEmail"]').fill('customer@example.test');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await page.getByRole('button', { name: 'Confirmar agendamento', exact: true }).click();
   await page.waitForURL('**/meu-agendamento/confirmation');
-  assert.equal(booking.branchPublicId, 'b0'); assert.equal(booking.servicePublicId, 'hybrid'); assert.equal(booking.scheduledStart, '2026-12-01T10:00:00Z');
+  assert.equal(booking.customerEmail, 'customer@example.test'); assert.equal(booking.branchPublicId, 'b0'); assert.equal(booking.servicePublicId, 'hybrid'); assert.equal(booking.scheduledStart, '2026-12-01T10:00:00Z');
   const invalid = await page.goto(`http://localhost:${port}/agendamento/multi/foreign/hybrid`); assert.equal(invalid.status(), 404);
   console.log('PASS: single-branch skip, three-branch selection, scheduling-only hybrid actions, isolated back link, booking form and invalid branch');
 } finally { await browser?.close(); child.kill(); fixture.close(); }

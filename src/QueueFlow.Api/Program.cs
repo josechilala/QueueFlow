@@ -58,7 +58,7 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 builder.Services.AddInfrastructure(builder.Configuration);
-if (!args.Contains("--migrate-only", StringComparer.Ordinal) && !args.Contains("--healthcheck", StringComparer.Ordinal)) builder.Services.AddQueueRealtimeProcessing();
+if (!args.Contains("--migrate-only", StringComparer.Ordinal) && !args.Contains("--healthcheck", StringComparer.Ordinal)) builder.Services.AddQueueRealtimeProcessing().AddAppointmentReceiptProcessing();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<TenantService>();
 builder.Services.AddScoped<OnboardingService>();

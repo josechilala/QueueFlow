@@ -24,6 +24,7 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
         var appointment = await BookSlotAsync(branch, service, settings, request.ScheduledStart, request.CustomerName, request.CustomerPhone, request.CustomerEmail, null, null, cancellationToken);
         if (appointment is null) return null;
         AddRealtime(appointment, "appointment.created");
+        await AppointmentReceipt.EnqueueAsync(db, appointment, clock.UtcNow, cancellationToken);
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return appointment;
     }
 
@@ -54,6 +55,7 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
         if (replacement is null) return null;
         var previous = original.Status; original.MarkRescheduled(clock.UtcNow); AddHistory(original, previous, "Reagendado pelo cliente");
         AddRealtime(original, "appointment.rescheduled"); AddRealtime(replacement, "appointment.created");
+        await AppointmentReceipt.EnqueueAsync(db, replacement, clock.UtcNow, cancellationToken);
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return replacement;
     }
 

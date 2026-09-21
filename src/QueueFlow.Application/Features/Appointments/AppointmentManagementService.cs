@@ -87,6 +87,7 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
         var previous = appointment.Status; transition(appointment, clock.UtcNow);
         db.AppointmentStatusHistory.Add(new AppointmentStatusHistory(Guid.NewGuid(), Tenant, appointment.Id, previous, appointment.Status, currentUser.UserId, reason, clock.UtcNow));
         db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), Tenant, "appointment.realtime", JsonSerializer.Serialize(new { eventName = action, appointmentToken = appointment.PublicToken, appointmentId = appointment.Id, appointment.ServiceId, status = appointment.Status.ToString(), appointment.ScheduledStart }), clock.UtcNow));
+        if (action == "appointment.confirmed") await AppointmentReceipt.EnqueueAsync(db, appointment, clock.UtcNow, cancellationToken);
         audit.Write(action, "Appointment", appointment.Id, new { PreviousStatus = previous.ToString(), Status = appointment.Status.ToString(), Reason = reason });
         await db.SaveChangesAsync(cancellationToken);
         return await GetAsync(id, cancellationToken);
