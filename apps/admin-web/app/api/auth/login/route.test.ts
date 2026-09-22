@@ -65,3 +65,49 @@ describe('login client IP forwarding', () => {
     expect(createProxyTrust()('10.0.0.2')).toBe(false);
   });
 });
+
+describe('post-login onboarding destination', () => {
+  it.each([
+    ['configured without explicit completion', { completed: false, branchReady: true, servicesReady: true, operationReady: true, nextStep: 'links' }, false],
+    ['explicitly completed', { completed: true, branchReady: true, servicesReady: true, operationReady: true, nextStep: 'dashboard' }, false],
+    ['previously completed with subsequent configuration changes', { completed: true, branchReady: false, servicesReady: false, operationReady: false, nextStep: 'dashboard' }, false],
+    ['new organization', { completed: false, branchReady: false, servicesReady: false, operationReady: false, nextStep: 'branch' }, true],
+    ['missing services', { completed: false, branchReady: true, servicesReady: false, operationReady: false, nextStep: 'services' }, true],
+    ['missing queue or schedule', { completed: false, branchReady: true, servicesReady: true, operationReady: false, nextStep: 'operation' }, true],
+  ])('uses backend progress for Owner: %s', async (_scenario, progress, expected) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({ role: 'Owner' }))
+      .mockResolvedValueOnce(Response.json(progress));
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await POST(request('10.0.0.2'));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ authenticated: true, role: 'Owner', needsOnboarding: expected });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toMatch(/\/api\/v1\/onboarding$/);
+    expect(fetchMock.mock.calls[2][1]).toEqual({ headers: { Authorization: 'Bearer access' }, cache: 'no-store' });
+    expect(response.cookies.get('queueflow_access')?.value).toBe('access');
+    expect(response.cookies.get('queueflow_refresh')?.value).toBe('refresh');
+  });
+
+  it.each(['Admin', 'Manager', 'Viewer', 'Attendant'])('preserves %s behavior without querying onboarding', async role => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({ role }));
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await POST(request('10.0.0.2'));
+    expect(await response.json()).toEqual({ authenticated: true, role, needsOnboarding: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(response.cookies.get('queueflow_access')?.value).toBe(role === 'Attendant' ? undefined : 'access');
+  });
+
+  it('preserves the error response when onboarding cannot be read', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({ role: 'Owner' }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 })));
+    const response = await POST(request('10.0.0.2'));
+    expect(response.status).toBe(502);
+    expect(response.cookies.get('queueflow_access')).toBeUndefined();
+  });
+});

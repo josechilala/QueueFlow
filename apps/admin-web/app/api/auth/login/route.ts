@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { apiUrl, type AuthenticatedUser, type TokenPair } from '../../../../lib/auth';
 import { setAuthCookies } from '../../../../lib/auth-cookies';
 import { clientIpHeaders } from '../../../../lib/trusted-client-ip.mjs';
+import type { OnboardingProgress } from '../../../../lib/server-onboarding';
 
 export async function POST(request: Request) {
   const body = (await request.json()) as { email?: string; password?: string };
@@ -16,7 +17,11 @@ export async function POST(request: Request) {
   if (session.role === 'Owner') {
     const progress = await fetch(`${apiUrl}/api/v1/onboarding`, { headers: { Authorization: `Bearer ${tokens.accessToken}` }, cache: 'no-store' });
     if (!progress.ok) return NextResponse.json({ message: 'Não foi possível consultar a configuração.' }, { status: 502 });
-    needsOnboarding = !(await progress.json() as { completed: boolean }).completed;
+    const configuration = await progress.json() as OnboardingProgress;
+    // Completed is the explicit acknowledgement; existing operations may already
+    // be ready without it. Read readiness from the same API as /onboarding.
+    needsOnboarding = !(configuration.completed ||
+      (configuration.branchReady && configuration.servicesReady && configuration.operationReady));
   }
   const response = NextResponse.json({ authenticated: true, role: session.role, needsOnboarding });
   if (session.role !== 'Attendant') setAuthCookies(response, tokens);
