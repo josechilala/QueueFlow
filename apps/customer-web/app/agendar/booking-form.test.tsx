@@ -11,7 +11,7 @@ it('requires a valid customer email before a new booking can be submitted', asyn
   const container = document.createElement('div'); document.body.append(container);
   const root = createRoot(container);
   await act(async () => root.render(<BookingForm organizationName="Empresa" branchName="Unidade" serviceName="Serviço"
-    branchPublicId="branch" servicePublicId="service" timeZone="UTC"
+    branchPublicId="branch" servicePublicId="service" timeZone="UTC" queriedDate="2026-12-01"
     slots={[{ startAt: '2026-12-01T10:00:00Z', endAt: '2026-12-01T10:30:00Z', remainingCapacity: 1 }]} />));
   const email = container.querySelector<HTMLInputElement>('input[name="customerEmail"]')!;
   expect(email.required).toBe(true);
