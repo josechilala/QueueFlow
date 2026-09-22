@@ -15,13 +15,14 @@ export default function HomePage() {
     <section className="hero"><div className="container hero-grid">
       <div className="hero-copy"><p className="eyebrow hero-eyebrow"><span /> MAIS FLUIDEZ. MENOS ESPERA.</p>
         <h1>O próximo passo<br />é um atendimento<br /><em>sem confusão.</em></h1>
-        <p className="hero-description">Filas digitais, agendamento online e gestão em tempo real. O QueueFlow centraliza sua operação para você cuidar do que importa: <strong>atender bem.</strong></p>
-        <div className="actions"><a className="button" href="#contato">Começar teste grátis <Icon name="arrow" /></a><a className="button button-outline" href="#recursos">Conhecer recursos</a></div>
-        <p className="hero-note"><Icon name="check" /> Teste por 14 dias <span>·</span> Acesso pelo navegador</p>
+        <p className="hero-summary">Gerencie filas, agendamentos e atendimentos em um só lugar.</p>
+        <p className="hero-description">Seus clientes entram na fila ou agendam online, acompanham sua posição em tempo real e sua equipe organiza todo o atendimento com mais eficiência.</p>
+        <div className="actions"><a className="button" href="#contato">Começar teste grátis <Icon name="arrow" /></a><a className="button button-outline" href="#como-funciona">Ver como funciona</a></div>
+        <ul className="hero-benefits"><li><Icon name="check" /> Sem cartão de crédito</li><li><Icon name="check" /> Acesso pelo navegador</li><li><Icon name="check" /> Teste de 14 dias</li></ul>
       </div><ProductPreview />
     </div></section>
 
-    <div className="value-strip"><div className="container"><span>Uma operação.<br /><strong>Muito mais organizada.</strong></span><span><Icon name="layers" /> Filas digitais</span><span><Icon name="calendar" /> Agendamento online</span><span><Icon name="activity" /> Visão em tempo real</span></div></div>
+    <div className="value-strip hero-value-strip"><div className="container"><span><Icon name="clock" /> Menos tempo de espera</span><span><Icon name="users" /> Clientes mais satisfeitos</span><span><Icon name="activity" /> Mais produtividade</span><span><Icon name="layers" /> Tudo em um só lugar</span></div></div>
 
     <section className="section container" aria-labelledby="beneficios-titulo"><div className="section-heading centered"><p className="eyebrow">BOM PARA QUEM CHEGA. BOM PARA QUEM ATENDE.</p><h2 id="beneficios-titulo">Mais organização em cada encontro.</h2><p className="section-intro">Troque a incerteza por um fluxo claro, do primeiro acesso à conclusão do atendimento.</p></div><div className="benefit-grid">{benefits.map(([icon, title, description]) => <article className="benefit-card" key={title}><span className="icon-box"><Icon name={icon} /></span><h3>{title}</h3><p>{description}</p></article>)}</div></section>
 

@@ -32,8 +32,8 @@ a, summary { -webkit-tap-highlight-color: transparent; }
 .button-outline { background: white; color: var(--ink); border-color: #ccd7d6; }
 .button-outline:hover { background: #f0f7f4; }
 .mobile-menu { display: none; }
-.hero { overflow: hidden; padding: 88px 0 64px; background: radial-gradient(ellipse at 85% 55%, #e0f4e9 0, transparent 55%), linear-gradient(180deg, #f9fcfb, #fff); }
-.hero-grid { display: grid; grid-template-columns: 1fr 1.04fr; gap: 50px; align-items: center; }
+.hero { overflow: hidden; padding: 48px 0 40px; background: radial-gradient(ellipse at 85% 55%, #e0f4e9 0, transparent 55%), linear-gradient(180deg, #f9fcfb, #fff); }
+.hero-grid { display: grid; grid-template-columns: 1fr 1.04fr; gap: 50px; align-items: start; }
 .eyebrow { color: var(--green); font-size: 11px; letter-spacing: 1.6px; font-weight: 800; margin-bottom: 20px; line-height: 1.7; }
 .hero-eyebrow { display: flex; gap: 9px; align-items: center; }
 .hero-eyebrow > span { width: 7px; height: 7px; background: #08a77b; border-radius: 50%; }
@@ -41,6 +41,33 @@ h1 { font-size: clamp(38px, 4.3vw, 58px); line-height: 1.1; letter-spacing: -2.8
 h1 em { color: var(--green); font-style: normal; }
 .hero-description { font-size: 16px; color: var(--muted); max-width: 470px; margin-bottom: 28px; }
 .hero-description strong { color: var(--ink); font-weight: 600; }
+.hero-summary { font-size: clamp(20px, 2vw, 24px); line-height: 1.4; font-weight: 650; letter-spacing: -.4px; max-width: 490px; margin-bottom: 14px; }
+.hero-benefits { list-style: none; display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 0; margin: 20px 0 0; color: var(--muted); }
+.hero-benefits li { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.5; }
+.hero-benefits svg { width: 16px; height: 16px; color: var(--green); }
+.hero-product-areas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 13px 18px; border-bottom: 1px solid var(--line); background: #f0f8f4; }
+.hero-product-areas span { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; font-weight: 650; color: var(--green); }
+.hero-product-areas svg { width: 15px; height: 15px; }
+.hero .product-preview { transform: none; }
+.hero .hero-appointment { width: 100%; justify-content: flex-start; border-color: #c5dfd2; }
+.hero .hero-appointment > div { display: grid; gap: 6px; }
+.hero .hero-appointment strong { font-size: 14px; }
+.hero .hero-appointment span { color: var(--muted); }
+.hero .hero-appointment .icon-box { color: var(--green); }
+.hero-value-strip > .container { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.hero-value-strip > .container > span { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 1.5; font-weight: 600; }
+@media (max-width: 900px) {
+  .hero-value-strip > .container { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 650px) {
+  .hero .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .hero .actions .button { padding: 12px 8px; gap: 5px; font-size: 12px; text-align: center; }
+  .hero .actions .button svg { display: none; }
+  .hero-product-areas { padding: 12px 8px; gap: 4px; }
+  .hero-product-areas span { flex-direction: column; gap: 5px; font-size: 10px; }
+  .hero-value-strip > .container > span { font-size: 12px; align-items: flex-start; gap: 7px; }
+  .hero .hero-appointment strong { font-size: 12px; }
+}
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .hero-note { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--muted); margin: 18px 0 0; }
 .hero-note svg { width: 16px; color: var(--green); }
