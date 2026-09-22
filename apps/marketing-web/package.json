@@ -1,0 +1,11 @@
+{
+  "name": "@queueflow/marketing-web",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3004",
+    "build": "next build",
+    "test": "vitest run"
+  },
+  "dependencies": { "next": "latest", "react": "latest", "react-dom": "latest" },
+  "devDependencies": { "@types/node": "latest", "@types/react": "latest", "@types/react-dom": "latest", "typescript": "latest", "vitest": "latest" }
+}

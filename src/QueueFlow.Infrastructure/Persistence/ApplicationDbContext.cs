@@ -34,6 +34,9 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<PlatformRefreshToken> PlatformRefreshTokens => Set<PlatformRefreshToken>();
     public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
     public DbSet<PlatformAuditLog> PlatformAuditLogs => Set<PlatformAuditLog>();
+    public DbSet<TrialRequest> TrialRequests => Set<TrialRequest>();
+    public async Task LockTrialRequestEmailAsync(string email, CancellationToken cancellationToken = default) =>
+        await Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({email}, 710041904))", cancellationToken);
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) => Database.BeginTransactionAsync(cancellationToken);
     public async Task LockPlatformBootstrapAsync(CancellationToken cancellationToken = default) => await Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(710041903)", cancellationToken);
 
@@ -91,6 +94,13 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             b.Property(x => x.Email).HasMaxLength(320); b.Property(x => x.ResponsibleName).HasMaxLength(200); b.Property(x => x.OrganizationName).HasMaxLength(200); b.Property(x => x.Plan).HasMaxLength(100); b.Property(x => x.TokenHash).HasMaxLength(200); b.Property(x => x.VerificationCodeHash).HasMaxLength(200); b.Property(x => x.ActivationAuthorizationHash).HasMaxLength(200);
         });
         modelBuilder.Entity<PlatformAuditLog>(b => { b.HasIndex(x => x.CreatedAt); b.HasIndex(x => new { x.PlatformUserId, x.CreatedAt }); b.Property(x => x.Action).HasMaxLength(200); b.Property(x => x.ResourceType).HasMaxLength(200); b.Property(x => x.CorrelationId).HasMaxLength(200); });
+        modelBuilder.Entity<TrialRequest>(b => {
+            b.HasIndex(x => x.Email).IsUnique(); b.HasIndex(x => new { x.Status, x.CreatedAt });
+            b.HasIndex(x => x.InvitationId).IsUnique();
+            b.HasOne<OrganizationInvitation>().WithMany().HasForeignKey(x => x.InvitationId).OnDelete(DeleteBehavior.Restrict);
+            b.Property(x => x.Name).HasMaxLength(200); b.Property(x => x.Email).HasMaxLength(320);
+            b.Property(x => x.CompanyName).HasMaxLength(200); b.Property(x => x.Phone).HasMaxLength(30); b.Property(x => x.TermsVersion).HasMaxLength(50);
+        });
         modelBuilder.Entity<Service>(b =>
         {
             b.Property(x => x.PublicId).HasMaxLength(32);

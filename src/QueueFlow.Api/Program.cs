@@ -81,6 +81,7 @@ builder.Services.PostConfigure<OnboardingOptions>(options =>
 });
 builder.Services.AddScoped<PlatformAuthService>();
 builder.Services.AddScoped<OrganizationInvitationService>();
+builder.Services.AddScoped<TrialRequestService>();
 builder.Services.AddScoped<PlatformAdministrationService>();
 builder.Services.AddScoped<PlatformBootstrapService>();
 var jwtKey = builder.Configuration["Authentication:JwtKey"] ?? throw new InvalidOperationException("Authentication:JwtKey must be provided through secrets or environment variables.");
@@ -130,6 +131,7 @@ builder.Services.AddRateLimiter(options =>
 {
     var globalPermitLimit = builder.Configuration.GetValue("RateLimiting:GlobalPermitLimit", 300);
     var publicPermitLimit = builder.Configuration.GetValue("RateLimiting:PublicPermitLimit", 30);
+    var trialRequestPermitLimit = builder.Configuration.GetValue("RateLimiting:TrialRequestPermitLimit", 5);
     var authPermitLimit = builder.Configuration.GetValue("RateLimiting:AuthPermitLimit", 10);
     var refreshPermitLimit = builder.Configuration.GetValue("RateLimiting:RefreshPermitLimit", 30);
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -144,6 +146,7 @@ builder.Services.AddRateLimiter(options =>
         RateLimitDiagnostics.Partition(context, "global", LoginRateLimitKeyMiddleware.GlobalPartitionKey(context)),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = globalPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("public", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "public", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions { PermitLimit = publicPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("trial-requests", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "trial-requests", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions { PermitLimit = trialRequestPermitLimit, Window = TimeSpan.FromMinutes(10), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "auth", LoginRateLimitKeyMiddleware.PartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("refresh", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "refresh", LoginRateLimitKeyMiddleware.RefreshPartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = refreshPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });

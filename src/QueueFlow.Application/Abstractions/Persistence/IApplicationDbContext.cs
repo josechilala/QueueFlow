@@ -31,6 +31,8 @@ public interface IApplicationDbContext
     DbSet<PlatformRefreshToken> PlatformRefreshTokens { get; }
     DbSet<OrganizationInvitation> OrganizationInvitations { get; }
     DbSet<PlatformAuditLog> PlatformAuditLogs { get; }
+    DbSet<TrialRequest> TrialRequests { get; }
+    Task LockTrialRequestEmailAsync(string email, CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
     Task LockPlatformBootstrapAsync(CancellationToken cancellationToken = default);
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

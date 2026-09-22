@@ -14,3 +14,5 @@ export const getPlatformInvitations = () => get<PlatformInvitation[]>('/api/v1/p
 export const getPlatformOrganizations = () => get<PlatformOrganization[]>('/api/v1/platform/organizations');
 export const getPlatformSubscriptions = () => get<PlatformSubscription[]>('/api/v1/platform/subscriptions');
 export const getPlatformAudit = () => get<PlatformAudit[]>('/api/v1/platform/audit');
+export type PlatformTrialRequest = { id: string; name: string; email: string; companyName: string; phone: string; status: 'Pending' | 'Approved' | 'Rejected'; createdAt: string; acceptedTermsAt: string; termsVersion: string; decidedAt: string | null; decidedByPlatformUserId: string | null; invitationId: string | null };
+export const getPlatformTrialRequests = () => get<PlatformTrialRequest[]>('/api/v1/platform/trial-requests');

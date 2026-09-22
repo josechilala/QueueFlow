@@ -1,0 +1,16 @@
+import type { Metadata } from 'next';
+import { LegalPage } from '../../components/legal-page';
+
+export const metadata: Metadata = { title: 'Privacidade — minuta em revisão', description: 'Estrutura preliminar das informações de privacidade do QueueFlow, pendente de revisão jurídica.', alternates: { canonical: '/privacidade/' }, robots: { index: false, follow: true } };
+
+export default function PrivacyPage() {
+  return <LegalPage title="Privacidade">
+    <section><h2>1. Escopo deste documento</h2><p>Esta página apresenta a estrutura preliminar das informações de privacidade do site institucional. O tratamento de dados nos painéis, nas filas e nos agendamentos precisa ser documentado de acordo com a operação efetiva da plataforma.</p><p><strong>Pendente de revisão:</strong> identificar os responsáveis pelo tratamento em cada contexto e o canal oficial de privacidade.</p></section>
+    <section><h2>2. Informações e finalidades</h2><p>O formulário de solicitação de teste envia nome, e-mail profissional, nome da empresa, telefone ou WhatsApp e aceite dos Termos de Uso e desta Política à API do QueueFlow. São registrados a data da solicitação, a data e a versão do aceite, o status da análise e, quando houver decisão, sua data e o administrador responsável. Em caso de aprovação, a solicitação é vinculada ao convite de ativação enviado por e-mail.</p><p>Essas informações permitem analisar o pedido e encaminhar as instruções de acesso. O envio do formulário não cria uma conta, não inicia o período de teste e não solicita senha ou pagamento.</p><p><strong>Pendente de revisão:</strong> complementar o inventário de dados da infraestrutura de hospedagem e validar as bases legais aplicáveis ao tratamento.</p></section>
+    <section><h2>3. Cookies e tecnologias de navegação</h2><p>O código desta versão institucional não adiciona ferramentas de publicidade, analytics ou cookies de autenticação.</p><p><strong>Pendente de revisão:</strong> verificar o comportamento do ambiente publicado e de eventuais serviços adicionados antes de concluir o inventário de cookies e as informações de preferências.</p></section>
+    <section><h2>4. Fornecedores e compartilhamento</h2><p><strong>Pendente de revisão:</strong> identificar os fornecedores efetivamente utilizados, as informações tratadas por eles e eventuais transferências internacionais. Esta minuta não presume uma lista de destinatários ou países.</p></section>
+    <section><h2>5. Retenção e segurança</h2><p><strong>Pendente de revisão:</strong> documentar prazos ou critérios de retenção, procedimentos de exclusão e medidas de segurança compatíveis com o tratamento real. Não há prazos de retenção definidos neste documento preliminar.</p></section>
+    <section><h2>6. Solicitações sobre dados pessoais</h2><p><strong>Pendente de revisão:</strong> descrever os direitos aplicáveis, o canal para exercê-los, o procedimento de verificação e os prazos de atendimento, após validação jurídica e operacional.</p></section>
+    <section><h2>7. Atualizações e contato</h2><p><strong>Pendente de revisão:</strong> publicar um contato de privacidade validado, a data da versão aprovada e a forma de comunicar alterações relevantes. Este documento ainda não possui versão definitiva.</p></section>
+  </LegalPage>;
+}
