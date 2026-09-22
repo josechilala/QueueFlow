@@ -85,7 +85,7 @@ describe('post-login onboarding destination', () => {
     expect(await response.json()).toEqual({ authenticated: true, role: 'Owner', needsOnboarding: expected });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[2][0]).toMatch(/\/api\/v1\/onboarding$/);
-    expect(fetchMock.mock.calls[2][1]).toEqual({ headers: { Authorization: 'Bearer access' }, cache: 'no-store' });
+    expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({ headers: { Authorization: 'Bearer access' }, cache: 'no-store', redirect: 'error', signal: expect.any(AbortSignal) }));
     expect(response.cookies.get('queueflow_access')?.value).toBe('access');
     expect(response.cookies.get('queueflow_refresh')?.value).toBe('refresh');
   });
@@ -107,7 +107,68 @@ describe('post-login onboarding destination', () => {
       .mockResolvedValueOnce(Response.json({ role: 'Owner' }))
       .mockResolvedValueOnce(new Response(null, { status: 503 })));
     const response = await POST(request('10.0.0.2'));
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
     expect(response.cookies.get('queueflow_access')).toBeUndefined();
+  });
+});
+
+describe('login infrastructure resilience', () => {
+  it.each([401, 429, 502, 503, 504])('preserves HTTP %i and existing cookies without replaying login', async status => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('upstream private error', { status, headers: { 'Retry-After': '42', 'X-RateLimit-Policy': 'auth' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const req = request('10.0.0.2');
+    req.headers.set('Cookie', 'queueflow_access=valid; queueflow_refresh=valid-refresh');
+    const response = await POST(req);
+    expect(response.status).toBe(status);
+    expect(response.headers.get('Retry-After')).toBe('42');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    if (status === 429) expect(response.headers.get('X-RateLimit-Policy')).toBe('auth');
+    expect(JSON.stringify(await response.json())).not.toContain('upstream private error');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers on a later explicit attempt after a network failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('network'))
+      .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({ role: 'Admin' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const failed = await POST(request('10.0.0.2'));
+    expect(failed.status).toBe(502); expect(failed.headers.get('Set-Cookie')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const recovered = await POST(request('10.0.0.2'));
+    expect(recovered.status).toBe(200); expect(recovered.cookies.get('queueflow_access')?.value).toBe('access');
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/auth/login'))).toHaveLength(2);
+  });
+
+  it.each(['html', 'tokens', 'profile'])('handles malformed %s without changing existing cookies', async kind => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(kind === 'html' ? new Response('<html>Waking up</html>') : Response.json(kind === 'tokens' ? {} : { accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await POST(request('10.0.0.2'));
+    expect(response.status).toBe(502); expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/auth/login'))).toHaveLength(1);
+  });
+
+  it('preserves rate limiting from the profile read without another credential POST', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': '12', 'X-RateLimit-Policy': 'global' } })));
+    const response = await POST(request('10.0.0.2'));
+    expect(response.status).toBe(429); expect(response.headers.get('Retry-After')).toBe('12');
+    expect(response.headers.get('X-RateLimit-Policy')).toBe('global'); expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('maps a bounded timeout to 504 without retrying or clearing cookies', async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    try {
+      const fetchMock = vi.fn().mockImplementation(async (_url, options) => {
+        controller.abort(); options.signal.throwIfAborted();
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const response = await POST(request('10.0.0.2'));
+      expect(response.status).toBe(504); expect(response.headers.get('Set-Cookie')).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1); expect(timeout).toHaveBeenCalledWith(75_000);
+    } finally { timeout.mockRestore(); }
   });
 });
