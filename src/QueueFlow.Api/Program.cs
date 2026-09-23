@@ -220,6 +220,11 @@ if (app.Environment.IsDevelopment())
 }
 
 if (!app.Environment.IsDevelopment()) app.UseHsts();
+app.Use((context, next) =>
+{
+    RateLimitDiagnostics.CaptureForwarding(context);
+    return next(context);
+});
 app.UseForwardedHeaders(TrustedProxyOptions.Create(builder.Configuration));
 app.UseHttpsRedirection();
 app.UseCors("web");

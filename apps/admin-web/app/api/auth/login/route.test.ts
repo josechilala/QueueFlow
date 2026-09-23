@@ -138,6 +138,28 @@ describe('post-login onboarding destination', () => {
 });
 
 describe('login infrastructure resilience', () => {
+  it.each(['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/onboarding', '/api/v1/onboarding/complete'])('identifies a 429 from %s without repeating authentication', async endpoint => {
+    const responses = [
+      Response.json({ accessToken: 'access', refreshToken: 'refresh' }),
+      Response.json({ role: 'Owner' }),
+      Response.json({ completed: false, branchReady: true, servicesReady: true, operationReady: true }),
+    ];
+    const stages = ['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/onboarding', '/api/v1/onboarding/complete'];
+    const index = stages.indexOf(endpoint);
+    const fetchMock = vi.fn();
+    responses.slice(0, index).forEach(response => fetchMock.mockResolvedValueOnce(response));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': '30', 'X-RateLimit-Policy': 'global' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await POST(request('10.0.0.2'));
+    expect(response.status).toBe(429);
+    expect(response.headers.get('X-RateLimit-Endpoint')).toBe(endpoint);
+    expect(response.headers.get('X-RateLimit-Policy')).toBe('global');
+    expect(response.headers.get('Retry-After')).toBe('30');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/auth/login'))).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(index + 1);
+  });
+
   it.each([401, 429, 502, 503, 504])('preserves HTTP %i and existing cookies without replaying login', async status => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('upstream private error', { status, headers: { 'Retry-After': '42', 'X-RateLimit-Policy': 'auth' } }));
     vi.stubGlobal('fetch', fetchMock);

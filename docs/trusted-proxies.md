@@ -80,6 +80,62 @@ o novo formato. Nenhuma migration ou invalidação geral de sessões é necessá
 A API deve ser implantada antes de avaliar a separação das cotas em sessões novas;
 issuer, audience e chave JWT devem permanecer consistentes entre instâncias.
 
-Toda rejeição registra política (`global`, `auth`, `refresh` ou `public`) e
-correlation ID, sem a chave da partição, IP, e-mail ou tokens. A resposta informa
-`X-RateLimit-Policy` e `Retry-After`, permitindo distinguir os limites nos logs.
+Toda rejeição registra política, template do endpoint (sem valores dos parâmetros
+ou query string), correlation ID, RetryAfter, IP resolvido, peer original e
+X-Forwarded-For sanitizado antes do processamento dos proxies. O header é limitado
+a 2048 caracteres/32 entradas; somente IPs válidos entram no log, outras entradas
+viram `invalid`. Headers maiores viram `oversized`.
+A partição aparece como HMAC com chave aleatória por processo, permitindo comparar
+buckets na mesma instância sem expor e-mail, hash de token ou chave original.
+`Instance` distingue processos; HMACs não são comparáveis entre reinícios/instâncias.
+Senhas, JWTs, cookies e corpos das requisições não são registrados.
+A resposta da API continua informando `X-RateLimit-Policy` e `Retry-After`.
+
+## Investigação de 429 no login
+
+Um 429 em `/api/auth/login` do Admin não prova que o POST de autenticação foi
+bloqueado: o BFF também propaga 429 das consultas `/api/v1/auth/me`,
+`/api/v1/onboarding` e do POST `/api/v1/onboarding/complete`. O novo header
+`X-RateLimit-Endpoint` e o evento `admin_login_rate_limited` identificam a etapa.
+Esse endpoint é uma constante local; headers arbitrários do upstream não definem
+o valor. Política ausente/desconhecida é registrada como `unknown`, sem atribuir
+automaticamente a rejeição à API ou ao Render.
+
+Configurações padrão no código (overrides do ambiente de produção precisam ser conferidos):
+
+| Política | PermitLimit | Window | QueueLimit | Partição |
+| --- | ---: | --- | ---: | --- |
+| global | 300 | 1 minuto | 0 | identidade verificável no refresh; senão NameIdentifier autenticado; senão IP/unknown |
+| auth | 10 | 1 minuto | 0 | login: IP + SHA-256 do e-mail normalizado; demais casos: IP |
+| refresh | 30 | 1 minuto | 0 | identidade verificável; senão hash do token; senão IP |
+| public | 30 | 1 minuto | 0 | IP/unknown |
+| trial-requests | 5 | 10 minutos | 0 | IP/unknown |
+
+São fixed windows com reposição automática. O global é adquirido primeiro, depois
+a política do endpoint. Não existe limiter no servidor Next: há bloqueio de submit
+concorrente e cooldown no formulário, sem repetição automática do POST. O middleware
+de navegação do Admin não intercepta `/login` nem `/api/auth/login`.
+`auth` é compartilhada entre login tenant/platform quando IP e e-mail coincidem.
+Todas as tentativas consomem quota, inclusive credenciais corretas: o limiter roda
+antes do controller e da verificação da senha. Não se trata de bloqueio persistido
+na conta por número de senhas erradas.
+
+O teste `SharedProxyGlobalBudgetCanBlockAnEmailWithNoPreviousLoginAttempts`
+reproduz o risco: requisições anônimas do mesmo IP esgotam o global e bloqueiam um
+e-mail novo mesmo sem esgotar `auth`. Separar e-mails em `auth` não elimina esse
+compartilhamento global. O teste usa limite global reduzido apenas no host de teste.
+
+Sem `QUEUEFLOW_TRUSTED_PROXIES` no Admin e sem `ReverseProxy:KnownProxies`/
+`KnownNetworks` na API, cada camada usa seu peer TCP. Mesmo com trust configurado,
+ForwardLimit insuficiente pode parar no BFF/proxy intermediário. Não há configuração
+de produção versionada que permita afirmar quais IPs estão sendo usados no Render.
+Conferir cadeia real, comando de início do Admin, valores efetivos das cinco
+configurações `RateLimiting:*PermitLimit` e logs da mesma tentativa antes de alterar
+trust ou limites. Nunca confiar em `/0` ou simplesmente no primeiro IP do header.
+
+Os limiters são locais à memória do processo, sem Redis/banco. Restart/deploy reinicia
+as cotas; múltiplas instâncias mantêm contadores independentes. Cold start pode
+adicionar latência, mas não esgota sozinho uma quota recém-criada. Um bloqueio depois
+de inatividade exige verificar tráfego concorrente, configuração, etapa exata e
+eventual rejeição no ingresso. Não foi comprovada a causa específica de produção
+apenas pelo sintoma de 429 com Retry-After.

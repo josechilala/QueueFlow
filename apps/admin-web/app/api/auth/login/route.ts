@@ -5,12 +5,18 @@ import { clientIpHeaders } from '../../../../lib/trusted-client-ip.mjs';
 import type { OnboardingProgress } from '../../../../lib/server-onboarding';
 import { loginError } from '../../../../lib/login-feedback';
 
-function failure(status: number, upstream?: Response) {
+function failure(status: number, upstream?: Response, endpoint = '/api/v1/auth/login') {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
   const retryAfter = upstream?.headers.get('Retry-After');
   if (retryAfter) headers.set('Retry-After', retryAfter);
   const policy = upstream?.headers.get('X-RateLimit-Policy');
   if (status === 429 && policy && ['auth', 'global', 'refresh'].includes(policy)) headers.set('X-RateLimit-Policy', policy);
+  if (status === 429) {
+    headers.set('X-RateLimit-Endpoint', endpoint);
+    console.warn(JSON.stringify({ event: 'admin_login_rate_limited', endpoint,
+      policy: headers.get('X-RateLimit-Policy') ?? 'unknown',
+      retryAfter: retryAfter && /^\d{1,10}$/.test(retryAfter) ? Number(retryAfter) : null }));
+  }
   return NextResponse.json({ message: loginError(status) }, { status, headers });
 }
 
@@ -29,13 +35,13 @@ export async function POST(request: Request) {
     const tokens = (await apiResponse.json()) as TokenPair;
     if (!tokens || typeof tokens.accessToken !== 'string' || !tokens.accessToken.trim() || typeof tokens.refreshToken !== 'string' || !tokens.refreshToken.trim()) return failure(502);
     const sessionResponse = await fetch(`${apiUrl}/api/v1/auth/me`, { ...options, headers: { Authorization: `Bearer ${tokens.accessToken}` } });
-    if (!sessionResponse.ok) return failure(sessionResponse.status === 429 || sessionResponse.status >= 500 ? sessionResponse.status : 502, sessionResponse);
+    if (!sessionResponse.ok) return failure(sessionResponse.status === 429 || sessionResponse.status >= 500 ? sessionResponse.status : 502, sessionResponse, '/api/v1/auth/me');
     const session = (await sessionResponse.json()) as AuthenticatedUser;
     if (!session || !['Owner', 'Admin', 'Manager', 'Attendant', 'Viewer'].includes(session.role)) return failure(502);
     let needsOnboarding = false;
     if (session.role === 'Owner') {
       const progress = await fetch(`${apiUrl}/api/v1/onboarding`, { ...options, headers: { Authorization: `Bearer ${tokens.accessToken}` } });
-      if (!progress.ok) return failure(progress.status === 429 || progress.status >= 500 ? progress.status : 502, progress);
+      if (!progress.ok) return failure(progress.status === 429 || progress.status >= 500 ? progress.status : 502, progress, '/api/v1/onboarding');
       const configuration = await progress.json() as OnboardingProgress;
       if (!configuration || ['completed', 'branchReady', 'servicesReady', 'operationReady'].some(key => typeof configuration[key as keyof OnboardingProgress] !== 'boolean')) return failure(502);
       // Completed is the explicit acknowledgement; existing operations may already
@@ -49,7 +55,7 @@ export async function POST(request: Request) {
           ...options, method: 'POST', headers: { Authorization: `Bearer ${tokens.accessToken}` },
         });
         if (completion.status === 400) needsOnboarding = true; // Configuration changed since the read.
-        else if (!completion.ok) return failure(completion.status === 429 || completion.status >= 500 ? completion.status : 502, completion);
+        else if (!completion.ok) return failure(completion.status === 429 || completion.status >= 500 ? completion.status : 502, completion, '/api/v1/onboarding/complete');
       }
     }
     const response = NextResponse.json({ authenticated: true, role: session.role, needsOnboarding }, { headers: { 'Cache-Control': 'no-store' } });

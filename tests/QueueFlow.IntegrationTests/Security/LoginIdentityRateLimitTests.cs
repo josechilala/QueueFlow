@@ -93,6 +93,18 @@ public sealed class LoginIdentityRateLimitTests
     }
 
     [Fact]
+    public async Task SharedProxyGlobalBudgetCanBlockAnEmailWithNoPreviousLoginAttempts()
+    {
+        await using var root = new QueueFlowApiFactory();
+        await using var factory = CreateFactory(root, globalLimit: 2);
+        // Even malformed refresh requests spend the same anonymous global IP budget.
+        Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
+        Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
+        Assert.Equal(429, await Send(factory, "/api/v1/auth/login", "{\"email\":\"new@example.test\"}", expectedPolicy: "global"));
+        Assert.Equal(400, await Send(factory, "/api/v1/auth/login", "{\"email\":\"new@example.test\"}", peer: "198.51.100.2"));
+    }
+
+    [Fact]
     public async Task OversizedLoginBodyIsRejectedInsteadOfBypassingEmailQuota()
     {
         await using var root = new QueueFlowApiFactory();
