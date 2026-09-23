@@ -42,6 +42,15 @@ export async function POST(request: Request) {
       // be ready without it. Read readiness from the same API as /onboarding.
       needsOnboarding = !(configuration.completed ||
         (configuration.branchReady && configuration.servicesReady && configuration.operationReady));
+      if (!configuration.completed && !needsOnboarding) {
+        // Persist readiness through the existing backend validation before bypassing
+        // onboarding. This also reconciles operational legacy organizations safely.
+        const completion = await fetch(`${apiUrl}/api/v1/onboarding/complete`, {
+          ...options, method: 'POST', headers: { Authorization: `Bearer ${tokens.accessToken}` },
+        });
+        if (completion.status === 400) needsOnboarding = true; // Configuration changed since the read.
+        else if (!completion.ok) return failure(completion.status === 429 || completion.status >= 500 ? completion.status : 502, completion);
+      }
     }
     const response = NextResponse.json({ authenticated: true, role: session.role, needsOnboarding }, { headers: { 'Cache-Control': 'no-store' } });
     if (session.role !== 'Attendant') setAuthCookies(response, tokens);

@@ -31,6 +31,8 @@ public sealed class OnboardingService(IApplicationDbContext db, ICurrentUser use
     public async Task<Result> CompleteAsync(CancellationToken ct)
     {
         var progress = await GetAsync(ct);
+        // Completion is a durable milestone, not a recurring operational health check.
+        if (progress.Completed) return Result.Success();
         if (!progress.BranchReady || !progress.ServicesReady || !progress.OperationReady)
             return Result.Failure(new("onboarding.incomplete", "Configure uma unidade, serviços e suas filas ou agendas antes de concluir."));
         var organization = await db.Organizations.SingleAsync(x => x.Id == user.OrganizationId, ct);

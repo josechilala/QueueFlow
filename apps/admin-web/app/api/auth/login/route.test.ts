@@ -67,6 +67,25 @@ describe('login client IP forwarding', () => {
 });
 
 describe('post-login onboarding destination', () => {
+  it.each([400, 429, 503])('handles completion HTTP %i without retries or bypassing backend validation', async status => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
+      .mockResolvedValueOnce(Response.json({ role: 'Owner' }))
+      .mockResolvedValueOnce(Response.json({ completed: false, branchReady: true, servicesReady: true, operationReady: true }))
+      .mockResolvedValueOnce(new Response(null, { status, headers: { 'Retry-After': '42' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await POST(request('10.0.0.2'));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    if (status === 400) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ authenticated: true, role: 'Owner', needsOnboarding: true });
+    } else {
+      expect(response.status).toBe(status);
+      expect(response.headers.get('Set-Cookie')).toBeNull();
+      expect(response.headers.get('Retry-After')).toBe('42');
+    }
+  });
+
   it.each([
     ['configured without explicit completion', { completed: false, branchReady: true, servicesReady: true, operationReady: true, nextStep: 'links' }, false],
     ['explicitly completed', { completed: true, branchReady: true, servicesReady: true, operationReady: true, nextStep: 'dashboard' }, false],
@@ -78,12 +97,18 @@ describe('post-login onboarding destination', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(Response.json({ accessToken: 'access', refreshToken: 'refresh' }))
       .mockResolvedValueOnce(Response.json({ role: 'Owner' }))
-      .mockResolvedValueOnce(Response.json(progress));
+      .mockResolvedValueOnce(Response.json(progress))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     const response = await POST(request('10.0.0.2'));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ authenticated: true, role: 'Owner', needsOnboarding: expected });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const shouldComplete = !progress.completed && !expected;
+    expect(fetchMock).toHaveBeenCalledTimes(shouldComplete ? 4 : 3);
+    if (shouldComplete) {
+      expect(fetchMock.mock.calls[3][0]).toMatch(/\/onboarding\/complete$/);
+      expect(fetchMock.mock.calls[3][1]).toEqual(expect.objectContaining({ method: 'POST', headers: { Authorization: 'Bearer access' } }));
+    }
     expect(fetchMock.mock.calls[2][0]).toMatch(/\/api\/v1\/onboarding$/);
     expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({ headers: { Authorization: 'Bearer access' }, cache: 'no-store', redirect: 'error', signal: expect.any(AbortSignal) }));
     expect(response.cookies.get('queueflow_access')?.value).toBe('access');
