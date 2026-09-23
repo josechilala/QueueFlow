@@ -58,8 +58,7 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
         if (user is null) return Result.Failure<ManagedUserDto>(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
-        if (actor is null || !RolePermissions.CanAssignRole(actor.Value, user.Role) || !RolePermissions.CanAssignRole(actor.Value, request.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
-        if (user.Role == UserRole.Owner && request.Role != UserRole.Owner && !await HasAnotherOwnerAsync(user.Id, ct)) return Result.Failure<ManagedUserDto>(new("users.last_owner", "The last active Owner cannot be changed."));
+        if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role) || !RolePermissions.CanAssignRole(actor.Value, request.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
         var branchResult = await ValidateBranchesAsync(request.BranchIds, request.Role, ct);
         if (branchResult.IsFailure) return Result.Failure<ManagedUserDto>(branchResult.Error);
 
@@ -79,9 +78,8 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
         if (user is null) return Result.Failure<ManagedUserDto>(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
-        if (actor is null || !RolePermissions.CanAssignRole(actor.Value, user.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
+        if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
         if (!isActive && id == currentUser.UserId) return Result.Failure<ManagedUserDto>(new("users.self_deactivation", "You cannot deactivate your own account."));
-        if (!isActive && user.Role == UserRole.Owner && !await HasAnotherOwnerAsync(user.Id, ct)) return Result.Failure<ManagedUserDto>(new("users.last_owner", "The last active Owner cannot be deactivated."));
         user.SetActive(isActive, clock.UtcNow);
         if (!isActive) await RevokeSessionsAsync(id, ct);
         audit.Write("user.status_changed", "User", user.Id, new { IsActive = isActive });
@@ -95,7 +93,7 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
         if (user is null) return Result.Failure(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
-        if (actor is null || !RolePermissions.CanAssignRole(actor.Value, user.Role)) return Result.Failure(Forbidden);
+        if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role)) return Result.Failure(Forbidden);
         if (string.IsNullOrEmpty(password) || password.Length < 12) return Result.Failure(new("users.password", "Password must contain at least 12 characters."));
         user.SetPasswordHash(passwords.Hash(password), clock.UtcNow);
         await RevokeSessionsAsync(id, ct);
@@ -117,7 +115,6 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         foreach (var branchId in branchIds) db.UserBranches.Add(new UserBranch(Guid.NewGuid(), user.OrganizationId, user.Id, branchId, user.Role));
     }
 
-    private Task<bool> HasAnotherOwnerAsync(Guid id, CancellationToken ct) => db.Users.AnyAsync(x => x.Id != id && x.Role == UserRole.Owner && x.IsActive, ct);
     private async Task RevokeSessionsAsync(Guid id, CancellationToken ct) { foreach (var token in await db.RefreshTokens.Where(x => x.UserId == id && x.RevokedAt == null).ToListAsync(ct)) token.Revoke(clock.UtcNow); }
     private static ManagedUserDto Map(AppUser user, IReadOnlyList<Guid> branches) => new(user.Id, user.Name, user.Email, user.Role, user.IsActive, branches);
 }

@@ -97,6 +97,7 @@ public sealed class InvitationFlowTests(PlatformTestFactory factory) : IClassFix
             Assert.NotNull(invitation.UsedAt);
             Assert.Equal(1, await db.Organizations.CountAsync(x => x.Id == invitation.ActivatedOrganizationId, Ct));
             Assert.Equal(1, await db.Users.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == invitation.ActivatedOrganizationId, Ct));
+            Assert.Equal(1, await db.Users.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == invitation.ActivatedOrganizationId && x.Role == QueueFlow.Domain.Enums.UserRole.Owner, Ct));
             Assert.Equal(1, await db.Subscriptions.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == invitation.ActivatedOrganizationId && x.Plan == "Trial", Ct));
             using var tenantLogin = await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email = issued.Invitation.Email, password = command.password }, Ct);
             Assert.Equal(HttpStatusCode.OK, tenantLogin.StatusCode);

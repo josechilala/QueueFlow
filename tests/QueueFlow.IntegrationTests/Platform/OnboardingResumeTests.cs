@@ -88,7 +88,7 @@ public sealed class OnboardingResumeTests(PlatformTestFactory factory) : IClassF
         await db.SaveChangesAsync(Ct);
         using var owner = isolated.CreateClient();
         owner.DefaultRequestHeaders.Authorization = new("Bearer", isolated.Services.GetRequiredService<ITokenService>().CreateAccessToken(Guid.NewGuid(), Guid.NewGuid(), UserRole.Owner, "other@example.test"));
-        using var response = await owner.PostAsJsonAsync("/api/v1/users", new { name = "New user", email, password = "New-password-123!", role = "Viewer" }, Ct);
+        using var response = await owner.PostAsJsonAsync("/api/v1/users", new { name = "New user", email, password = "New-password-123!", role = "Admin" }, Ct);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.DoesNotContain("Private owner", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
