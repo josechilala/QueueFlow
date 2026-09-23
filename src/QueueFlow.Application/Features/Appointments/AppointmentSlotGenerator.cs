@@ -32,7 +32,8 @@ public static class AppointmentSlotGenerator
                 if (used < capacity) result.Add(new(start, end, capacity - used));
             }
         }
-        return result.OrderBy(x => x.StartAt).ToArray();
+        // Overlapping schedules describe availability, not additional capacity for the same instant.
+        return result.DistinctBy(x => x.StartAt).OrderBy(x => x.StartAt).ToArray();
     }
 
     private static bool Overlaps(DateTimeOffset start, DateTimeOffset end, SlotWindow other) => start < other.EndAt && end > other.StartAt;

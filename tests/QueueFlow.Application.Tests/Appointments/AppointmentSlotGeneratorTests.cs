@@ -7,6 +7,34 @@ public sealed class AppointmentSlotGeneratorTests
     private static readonly DateOnly Date = new(2026, 8, 26);
 
     [Fact]
+    public void RepeatedSchedulesProduceOneSlotPerInstantWithoutMultiplyingCapacity()
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
+        var start = new DateTimeOffset(2026, 8, 26, 16, 30, 0, TimeSpan.Zero);
+        var slots = AppointmentSlotGenerator.Generate(Date, zone,
+            [(new(13, 30), new(14, 30)), (new(13, 30), new(14, 30)), (new(13, 30), new(14, 30))],
+            30, 2, DateTimeOffset.MinValue, DateTimeOffset.MaxValue, [], [new(start, start.AddMinutes(30))]);
+
+        Assert.Collection(slots,
+            first => { Assert.Equal(start, first.StartAt); Assert.Equal(start.AddMinutes(30), first.EndAt); Assert.Equal(1, first.RemainingCapacity); },
+            second => { Assert.Equal(start.AddMinutes(30), second.StartAt); Assert.Equal(2, second.RemainingCapacity); });
+        Assert.NotNull(slots.SingleOrDefault(x => x.StartAt == start));
+    }
+
+    [Fact]
+    public void OverlappingSchedulesPreserveTheirGridsBlocksAndAdvanceWindowWithoutDuplicateSlots()
+    {
+        var start = new DateTimeOffset(2026, 8, 26, 9, 0, 0, TimeSpan.Zero);
+        var slots = AppointmentSlotGenerator.Generate(Date, TimeZoneInfo.Utc,
+            [(new(9, 0), new(11, 0)), (new(9, 30), new(11, 30)), (new(9, 15), new(10, 15))],
+            30, 1, start.AddMinutes(15), start.AddMinutes(90),
+            [new(start.AddHours(1), start.AddMinutes(90))], []);
+
+        Assert.Equal(new[] { start.AddMinutes(15), start.AddMinutes(30), start.AddMinutes(90) }, slots.Select(x => x.StartAt));
+        Assert.All(slots, slot => Assert.Equal(1, slot.RemainingCapacity));
+    }
+
+    [Fact]
     public void GeneratesSlotsInsideScheduleAndRespectsCapacity()
     {
         var slots = AppointmentSlotGenerator.Generate(Date, TimeZoneInfo.Utc, [(new(9, 0), new(10, 0))], 30, 2,

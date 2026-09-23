@@ -39,6 +39,10 @@ public sealed class PublicAppointmentDiagnosticsTests(PlatformTestFactory factor
         var start = new DateTimeOffset(now.UtcDateTime.Date.AddDays(2).AddHours(13), TimeSpan.Zero);
         var schedule = new ServiceSchedule(Guid.NewGuid(), org.Id, branch.Id, service.Id, start.DayOfWeek, new(10, 0), new(14, 0), now);
         db.AddRange(org, branch, service, settings, schedule);
+        // Existing repeated/overlapping schedules must not duplicate slots or break booking.
+        db.AddRange(
+            new ServiceSchedule(Guid.NewGuid(), org.Id, branch.Id, service.Id, start.DayOfWeek, new(10, 0), new(14, 0), now),
+            new ServiceSchedule(Guid.NewGuid(), org.Id, branch.Id, service.Id, start.DayOfWeek, new(10, 0), new(15, 0), now));
         await db.SaveChangesAsync(Ct);
         using var client = isolated.CreateClient();
         client.DefaultRequestHeaders.Add("X-Correlation-ID", "appointment-diagnostic-test");
@@ -48,6 +52,14 @@ public sealed class PublicAppointmentDiagnosticsTests(PlatformTestFactory factor
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var token = (await created.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("publicToken").GetString()!;
         Assert.Equal(1, await db.Appointments.IgnoreQueryFilters().CountAsync(Ct));
+        var date = start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        using var availability = await client.GetAsync($"/api/v1/public/branches/{branch.PublicId}/services/{service.PublicId}/availability?date={date}", Ct);
+        Assert.Equal(HttpStatusCode.OK, availability.StatusCode);
+        var slots = (await availability.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("slots").EnumerateArray().ToArray();
+        Assert.Equal(9, slots.Length);
+        Assert.Equal(slots.Length, slots.Select(x => x.GetProperty("startAt").GetDateTimeOffset()).Distinct().Count());
+        Assert.DoesNotContain(slots, x => x.GetProperty("startAt").GetDateTimeOffset() == start);
+        Assert.All(slots, slot => Assert.Equal(1, slot.GetProperty("remainingCapacity").GetInt32()));
         using var occupied = await client.PostAsJsonAsync("/api/v1/public/appointments", Payload(start), Ct);
         Assert.Equal(HttpStatusCode.Conflict, occupied.StatusCode);
         using var invalid = await client.PostAsJsonAsync("/api/v1/public/appointments", new { branchPublicId = branch.PublicId, servicePublicId = service.PublicId, scheduledStart = "invalid", customerName = "Private customer" }, Ct);
