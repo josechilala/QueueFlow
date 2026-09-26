@@ -133,6 +133,7 @@ public sealed class TicketIssuanceConcurrencyTests : IClassFixture<QueueFlowApiF
     private sealed class UnusedTicketOperations : ITicketOperations
     {
         public Task<QueueTicket?> IssueAsync(string queuePublicId, TicketPriority priority, CancellationToken cancellationToken) => Task.FromResult<QueueTicket?>(null);
+        public Task<int> GetTicketsAheadAsync(Guid organizationId, Guid queueId, Guid ticketId, CancellationToken cancellationToken) => Task.FromResult(0);
         public Task<QueueTicket?> CallNextAsync(Guid organizationId, Guid queueId, Guid counterId, Guid attendantId, CancellationToken cancellationToken) => Task.FromResult<QueueTicket?>(null);
     }
 

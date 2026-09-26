@@ -15,7 +15,7 @@ public sealed record AppointmentNotificationTraceDto(int Generated, int Pending,
 public sealed record AppointmentDetailsDto(Guid Id, string CustomerName, string? CustomerPhone, string? CustomerEmail, AppointmentStatus Status, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, string ConfirmationCode, string PublicToken, string? Notes, Guid BranchId, string BranchName, Guid ServiceId, string ServiceName, Guid? QueueTicketId, DateTimeOffset CreatedAt, string Origin, Guid? CreatedByUserId, string CreatedBy, AppointmentNotificationTraceDto Notifications, IReadOnlyList<AppointmentHistoryDto> History);
 public sealed record AppointmentHistoryDto(AppointmentStatus PreviousStatus, AppointmentStatus NewStatus, string? Reason, DateTimeOffset CreatedAt);
 
-public sealed class AppointmentManagementService(IApplicationDbContext db, ICurrentUser currentUser, IClock clock, IAuditWriter audit, IAppointmentOperations operations)
+public sealed class AppointmentManagementService(IApplicationDbContext db, ICurrentUser currentUser, IClock clock, IAuditWriter audit)
 {
     private Guid Tenant => currentUser.OrganizationId ?? throw new UnauthorizedAccessException();
 
@@ -58,28 +58,6 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
     public Task<Result<AppointmentDetailsDto>> ConfirmAsync(Guid id, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.Confirm(now), "appointment.confirmed", null, cancellationToken);
     public Task<Result<AppointmentDetailsDto>> CancelAsync(Guid id, string? reason, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.Cancel(now), "appointment.cancelled", reason, cancellationToken);
     public Task<Result<AppointmentDetailsDto>> NoShowAsync(Guid id, string? reason, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.MarkNoShow(now), "appointment.no-show", reason, cancellationToken);
-    public async Task<Result<AppointmentDetailsDto>> CheckInAsync(Guid id, CancellationToken cancellationToken)
-    {
-        var appointment = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (appointment is null) return NotFound<AppointmentDetailsDto>();
-        if (appointment.QueueTicketId is not null) return await GetAsync(id, cancellationToken);
-
-        var result = await operations.CheckInAsync(id, cancellationToken);
-        if (result is null)
-        {
-            var current = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-            if (current?.QueueTicketId is not null) return await GetAsync(id, cancellationToken);
-            var hasQueue = current is not null && await db.Queues.AsNoTracking().AnyAsync(x =>
-                x.OrganizationId == Tenant && x.BranchId == current.BranchId && x.ServiceId == current.ServiceId &&
-                x.IsActive && x.Status == QueueStatus.Open, cancellationToken);
-            if (!hasQueue) return Result.Failure<AppointmentDetailsDto>(new("appointments.queue_unavailable", "Não há fila ativa para este serviço."));
-            return Result.Failure<AppointmentDetailsDto>(new("appointments.check_in_not_allowed", "A confirmação de chegada não está disponível agora."));
-        }
-        audit.Write("appointment.checked-in", "Appointment", id, new { result.Ticket.Id, result.Ticket.TicketNumber });
-        await db.SaveChangesAsync(cancellationToken);
-        return await GetAsync(id, cancellationToken);
-    }
-
     private async Task<Result<AppointmentDetailsDto>> TransitionAsync(Guid id, Action<Appointment, DateTimeOffset> transition, string action, string? reason, CancellationToken cancellationToken)
     {
         var appointment = await db.Appointments.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);

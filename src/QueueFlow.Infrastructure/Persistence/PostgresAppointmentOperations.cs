@@ -105,16 +105,10 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
         return replacement;
     }
 
-    public Task<AppointmentCheckInData?> CheckInAsync(string publicToken, CancellationToken cancellationToken) => CheckInCoreAsync(publicToken, null, cancellationToken);
-    public Task<AppointmentCheckInData?> CheckInAsync(Guid appointmentId, CancellationToken cancellationToken) => CheckInCoreAsync(null, appointmentId, cancellationToken);
-
-    private async Task<AppointmentCheckInData?> CheckInCoreAsync(string? publicToken, Guid? appointmentId, CancellationToken cancellationToken)
+    public async Task<AppointmentCheckInData?> CheckInAsync(Guid appointmentId, CancellationToken cancellationToken)
     {
-        if (publicToken is not null && !ValidPublicId(publicToken)) return null;
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var appointment = publicToken is not null
-            ? await db.Appointments.FromSqlInterpolated($"SELECT *, xmin FROM \"Appointments\" WHERE \"PublicToken\" = {publicToken} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken)
-            : await db.Appointments.FromSqlInterpolated($"SELECT *, xmin FROM \"Appointments\" WHERE \"Id\" = {appointmentId} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken);
+        var appointment = await db.Appointments.FromSqlInterpolated($"SELECT *, xmin FROM \"Appointments\" WHERE \"Id\" = {appointmentId} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken);
         if (appointment is null || appointment.Status != AppointmentStatus.Confirmed || appointment.QueueTicketId is not null) return null;
         var settings = await LockSettingsAsync(appointment.OrganizationId, appointment.ServiceId, cancellationToken);
         if (settings is null || clock.UtcNow < appointment.ScheduledStart.AddMinutes(-settings.CheckInAdvanceMinutes) || clock.UtcNow > appointment.ScheduledStart.AddMinutes(settings.LateToleranceMinutes)) return null;

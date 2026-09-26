@@ -18,8 +18,6 @@ public sealed class AppointmentsController(AppointmentManagementService appointm
     public async Task<IActionResult> Cancel(Guid id, AppointmentReasonRequest request, CancellationToken cancellationToken) => ToAction(await appointments.CancelAsync(id, request.Reason, cancellationToken));
     [HttpPost("{id:guid}/no-show")]
     public async Task<IActionResult> NoShow(Guid id, AppointmentReasonRequest request, CancellationToken cancellationToken) => ToAction(await appointments.NoShowAsync(id, request.Reason, cancellationToken));
-    [HttpPost("{id:guid}/check-in")]
-    public async Task<IActionResult> CheckIn(Guid id, CancellationToken cancellationToken) => ToAction(await appointments.CheckInAsync(id, cancellationToken));
     private IActionResult ToAction<T>(QueueFlow.Application.Common.Result<T> result) => result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 400);
 }
 

@@ -52,3 +52,12 @@ describe('appointment proxy diagnostics', () => {
     expect(await response.text()).toBe('<h1>Unavailable</h1>');
   });
 });
+
+
+it('rejects public check-in without calling the API', async () => {
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  const response = await action(new Request('https://customer.test/api/appointments/token/check-in', { method: 'POST', body: '{}' }),
+    { params: Promise.resolve({ publicToken: 'token', action: 'check-in' }) });
+  expect(response.status).toBe(404);
+  expect(fetch).not.toHaveBeenCalled();
+});

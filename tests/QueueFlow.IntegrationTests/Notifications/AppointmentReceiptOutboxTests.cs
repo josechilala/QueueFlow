@@ -89,7 +89,7 @@ public sealed class AppointmentReceiptOutboxTests
         await using (var scope = provider.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var management = new AppointmentManagementService(db, tenant, clock, new Audit(), scope.ServiceProvider.GetRequiredService<IAppointmentOperations>());
+            var management = new AppointmentManagementService(db, tenant, clock, new Audit());
             var confirmed = await management.ConfirmAsync(pending.Id, ct);
             Assert.True(confirmed.IsSuccess); Assert.Equal(AppointmentStatus.Confirmed, confirmed.Value.Status);
             await AppointmentReceipt.EnqueueAsync(db, await db.Appointments.SingleAsync(x => x.Id == pending.Id, ct), now, ct);

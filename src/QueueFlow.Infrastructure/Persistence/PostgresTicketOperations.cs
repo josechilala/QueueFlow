@@ -29,32 +29,15 @@ internal sealed class PostgresTicketOperations(ApplicationDbContext db, IClock c
         db.QueueTickets.Add(ticket); db.TicketEvents.Add(new(Guid.NewGuid(), queue.OrganizationId, ticket.Id, TicketStatus.Waiting, null, clock.UtcNow));
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return ticket;
     }
+    public Task<int> GetTicketsAheadAsync(Guid organizationId, Guid queueId, Guid ticketId, CancellationToken ct) =>
+        db.Database.SqlQuery<int>(PostgresQueueOrdering.TicketsAhead(organizationId, queueId, ticketId, clock.UtcNow)).SingleOrDefaultAsync(ct);
+
     public async Task<QueueTicket?> CallNextAsync(Guid organizationId, Guid queueId, Guid counterId, Guid attendantId, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var now = clock.UtcNow;
-        var ticket = await db.QueueTickets.FromSqlInterpolated($$"""
-            SELECT ticket.*, ticket.xmin
-            FROM "QueueTickets" ticket
-            LEFT JOIN "Appointments" appointment ON appointment."QueueTicketId" = ticket."Id" AND appointment."OrganizationId" = ticket."OrganizationId"
-            LEFT JOIN "ServiceSchedulingSettings" settings ON settings."ServiceId" = ticket."ServiceId" AND settings."OrganizationId" = ticket."OrganizationId"
-            WHERE ticket."OrganizationId" = {{organizationId}}
-              AND ticket."QueueId" = {{queueId}}
-              AND ticket."Status" = {{(int)TicketStatus.Waiting}}
-              AND (appointment."Id" IS NULL OR appointment."ScheduledStart" <= {{now}})
-            ORDER BY
-              CASE
-                WHEN appointment."Id" IS NULL AND ticket."IssuedAt" <= {{now}} - make_interval(mins => GREATEST(5, COALESCE(settings."SlotDurationMinutes", 30))) THEN 0
-                WHEN appointment."Id" IS NOT NULL
-                  AND {{now}} <= appointment."ScheduledStart" + make_interval(mins => COALESCE(settings."LateToleranceMinutes", 0))
-                  AND (SELECT COUNT(*) FROM "QueueTickets" active_ticket JOIN "Appointments" active_appointment ON active_appointment."QueueTicketId" = active_ticket."Id" WHERE active_ticket."OrganizationId" = ticket."OrganizationId" AND active_ticket."QueueId" = ticket."QueueId" AND active_ticket."Status" IN ({{(int)TicketStatus.Called}}, {{(int)TicketStatus.InService}})) < GREATEST(1, COALESCE(settings."CapacityPerSlot", 1)) THEN 1
-                ELSE 2
-              END,
-              CASE WHEN appointment."Id" IS NOT NULL AND {{now}} <= appointment."ScheduledStart" + make_interval(mins => COALESCE(settings."LateToleranceMinutes", 0)) AND (SELECT COUNT(*) FROM "QueueTickets" active_ticket JOIN "Appointments" active_appointment ON active_appointment."QueueTicketId" = active_ticket."Id" WHERE active_ticket."OrganizationId" = ticket."OrganizationId" AND active_ticket."QueueId" = ticket."QueueId" AND active_ticket."Status" IN ({{(int)TicketStatus.Called}}, {{(int)TicketStatus.InService}})) < GREATEST(1, COALESCE(settings."CapacityPerSlot", 1)) THEN appointment."ScheduledStart" END,
-              CASE WHEN appointment."Id" IS NOT NULL AND {{now}} <= appointment."ScheduledStart" + make_interval(mins => COALESCE(settings."LateToleranceMinutes", 0)) AND (SELECT COUNT(*) FROM "QueueTickets" active_ticket JOIN "Appointments" active_appointment ON active_appointment."QueueTicketId" = active_ticket."Id" WHERE active_ticket."OrganizationId" = ticket."OrganizationId" AND active_ticket."QueueId" = ticket."QueueId" AND active_ticket."Status" IN ({{(int)TicketStatus.Called}}, {{(int)TicketStatus.InService}})) < GREATEST(1, COALESCE(settings."CapacityPerSlot", 1)) THEN appointment."CheckedInAt" END,
-              ticket."Priority" DESC, ticket."IssuedAt", ticket."SequenceNumber"
-            FOR UPDATE OF ticket SKIP LOCKED LIMIT 1
-            """).IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+        var ticket = await db.QueueTickets.FromSqlInterpolated(PostgresQueueOrdering.Next(organizationId, queueId, now))
+            .IgnoreQueryFilters().SingleOrDefaultAsync(ct);
         if (ticket is null) return null;
         ticket.Call(counterId, attendantId, clock.UtcNow); db.TicketEvents.Add(new(Guid.NewGuid(), organizationId, ticket.Id, TicketStatus.Called, null, clock.UtcNow));
         db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), organizationId, "ticket.realtime", JsonSerializer.Serialize(new { eventName = "ticket.called", ticketToken = ticket.CustomerPublicToken, ticketId = ticket.Id, ticket.QueueId, ticket.TicketNumber, status = ticket.Status.ToString(), counterId }), clock.UtcNow));

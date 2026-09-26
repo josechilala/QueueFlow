@@ -34,7 +34,6 @@ public sealed class AppointmentEmailValidationTests
         public Task<Appointment?> CreateAsync(CreateAppointmentData request, CancellationToken ct) => throw new InvalidOperationException("Must not book invalid input.");
         public Task<Appointment?> CancelAsync(string token, CancellationToken ct) => throw new NotSupportedException();
         public Task<Appointment?> RescheduleAsync(string token, DateTimeOffset start, CancellationToken ct) => throw new NotSupportedException();
-        public Task<AppointmentCheckInData?> CheckInAsync(string token, CancellationToken ct) => throw new NotSupportedException();
         public Task<AppointmentCheckInData?> CheckInAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
     }
 }

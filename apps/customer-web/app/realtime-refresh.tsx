@@ -4,7 +4,7 @@ import { configuredUrl } from '../lib/configured-url';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-const events = ['QueueUpdated', 'appointment.created', 'appointment.confirmed', 'appointment.cancelled', 'appointment.rescheduled', 'appointment.checked-in', 'appointment.no-show', 'availability.updated', 'notification.created'];
+const events = ['QueueUpdated', 'appointment.created', 'appointment.confirmed', 'appointment.cancelled', 'appointment.rescheduled', 'appointment.checked-in', 'appointment.completed', 'appointment.no-show', 'availability.updated', 'notification.created'];
 export function RealtimeRefresh({ queuePublicId, queuePublicIds = [], ticketToken }: { queuePublicId?: string; queuePublicIds?: string[]; ticketToken?: string }) {
   const queueKey = JSON.stringify([...new Set([...queuePublicIds, ...(queuePublicId ? [queuePublicId] : [])])].sort());
   const router = useRouter();

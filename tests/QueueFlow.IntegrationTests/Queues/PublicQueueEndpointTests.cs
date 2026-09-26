@@ -102,6 +102,7 @@ public sealed class PublicQueueApiFactory : WebApplicationFactory<Program>
             return Task.FromResult(ticket);
         }
 
+        public Task<int> GetTicketsAheadAsync(Guid organizationId, Guid queueId, Guid ticketId, CancellationToken cancellationToken) => Task.FromResult(0);
         public Task<QueueTicket?> CallNextAsync(Guid organizationId, Guid queueId, Guid counterId, Guid attendantId, CancellationToken cancellationToken) =>
             Task.FromResult<QueueTicket?>(null);
     }

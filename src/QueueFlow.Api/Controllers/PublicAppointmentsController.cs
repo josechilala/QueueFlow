@@ -39,8 +39,6 @@ public sealed class PublicAppointmentsController(IAppointmentAvailabilityService
     public async Task<IActionResult> Cancel(string publicToken, CancellationToken cancellationToken) { var result = await appointments.CancelAsync(publicToken, cancellationToken); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 409); }
     [HttpPost("appointments/{publicToken}/reschedule"), EnableRateLimiting("public")]
     public async Task<IActionResult> Reschedule(string publicToken, RescheduleAppointmentRequest request, CancellationToken cancellationToken) { var result = await appointments.RescheduleAsync(publicToken, request.ScheduledStart, cancellationToken); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 409); }
-    [HttpPost("appointments/{publicToken}/check-in"), EnableRateLimiting("public")]
-    public async Task<IActionResult> CheckIn(string publicToken, CancellationToken cancellationToken) { var result = await appointments.CheckInAsync(publicToken, cancellationToken); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 409); }
 }
 
 public sealed record RescheduleAppointmentRequest(DateTimeOffset ScheduledStart);

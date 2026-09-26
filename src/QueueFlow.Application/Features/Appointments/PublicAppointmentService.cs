@@ -6,7 +6,7 @@ using QueueFlow.Domain.Enums;
 
 namespace QueueFlow.Application.Features.Appointments;
 
-public sealed record PublicAppointmentDto(string PublicToken, string ConfirmationCode, AppointmentStatus Status, string OrganizationName, string BranchPublicId, string BranchName, string ServicePublicId, string ServiceName, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, bool CanCancel, bool CanReschedule, bool CanCheckIn, string? QueueTicketToken, string? QueueTicketNumber);
+public sealed record PublicAppointmentDto(string PublicToken, string ConfirmationCode, AppointmentStatus Status, string OrganizationName, string BranchPublicId, string BranchName, string ServicePublicId, string ServiceName, DateTimeOffset ScheduledStart, DateTimeOffset ScheduledEnd, string TimeZone, bool CanCancel, bool CanReschedule, string? QueueTicketToken, string? QueueTicketNumber);
 
 public sealed record PublicSchedulingServiceDto(string PublicId, string Name, string? Description, ServiceAttendanceMode AttendanceMode, bool CanSchedule);
 public sealed record PublicSchedulingBranchDto(string PublicId, string Name, string? Address, string TimeZone, IReadOnlyList<PublicSchedulingServiceDto> Services);
@@ -41,9 +41,8 @@ public sealed class PublicAppointmentService(IApplicationDbContext db, IClock cl
         var active = appointment.Status is AppointmentStatus.Scheduled or AppointmentStatus.Confirmed;
         var canCancel = active && settings.AllowCustomerCancellation && clock.UtcNow <= appointment.ScheduledStart.AddMinutes(-settings.CancellationDeadlineMinutes);
         var canReschedule = active && settings.AllowCustomerReschedule && clock.UtcNow <= appointment.ScheduledStart.AddMinutes(-settings.CancellationDeadlineMinutes);
-        var canCheckIn = appointment.Status == AppointmentStatus.Confirmed && clock.UtcNow >= appointment.ScheduledStart.AddMinutes(-settings.CheckInAdvanceMinutes) && clock.UtcNow <= appointment.ScheduledStart.AddMinutes(settings.LateToleranceMinutes);
         var ticket = appointment.QueueTicketId is null ? null : await db.QueueTickets.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == appointment.OrganizationId && x.Id == appointment.QueueTicketId).Select(x => new { x.CustomerPublicToken, x.TicketNumber }).SingleOrDefaultAsync(cancellationToken);
-        return Result.Success(new PublicAppointmentDto(appointment.PublicToken, appointment.ConfirmationCode, appointment.Status, organizationName, branch.PublicId, branch.Name, service.PublicId, service.Name, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.TimeZone, canCancel, canReschedule, canCheckIn, ticket?.CustomerPublicToken, ticket?.TicketNumber));
+        return Result.Success(new PublicAppointmentDto(appointment.PublicToken, appointment.ConfirmationCode, appointment.Status, organizationName, branch.PublicId, branch.Name, service.PublicId, service.Name, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.TimeZone, canCancel, canReschedule, ticket?.CustomerPublicToken, ticket?.TicketNumber));
     }
 
     public async Task<Result<PublicAppointmentDto>> CancelAsync(string publicToken, CancellationToken cancellationToken)
@@ -57,11 +56,5 @@ public sealed class PublicAppointmentService(IApplicationDbContext db, IClock cl
         var appointment = await operations.RescheduleAsync(publicToken, scheduledStart, cancellationToken);
         return appointment is null ? Result.Failure<PublicAppointmentDto>(new("appointments.reschedule_not_allowed", "Não foi possível reagendar para este horário.")) : await GetAsync(appointment.PublicToken, cancellationToken);
     }
-    public async Task<Result<PublicAppointmentDto>> CheckInAsync(string publicToken, CancellationToken cancellationToken)
-    {
-        var result = await operations.CheckInAsync(publicToken, cancellationToken);
-        return result is null ? Result.Failure<PublicAppointmentDto>(new("appointments.check_in_not_allowed", "O check-in não está disponível agora ou a fila está fechada.")) : await GetAsync(publicToken, cancellationToken);
-    }
-
     private static Result<PublicAppointmentDto> NotFound() => Result.Failure<PublicAppointmentDto>(new("appointments.not_found", "O agendamento não foi encontrado."));
 }

@@ -167,7 +167,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
     {
         var ticket = await tickets.IssueAsync(publicId, priority, ct);
         if (ticket is null) return Result.Failure<TicketDto>(new("ticket.queue_unavailable", "A fila não está disponível ou atingiu sua capacidade."));
-        var ahead = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == ticket.OrganizationId && x.QueueId == ticket.QueueId && x.Status == TicketStatus.Waiting && x.SequenceNumber < ticket.SequenceNumber, ct);
+        var ahead = await tickets.GetTicketsAheadAsync(ticket.OrganizationId, ticket.QueueId, ticket.Id, ct);
         var average = await db.Services.IgnoreQueryFilters().Where(x => x.Id == ticket.ServiceId).Select(x => x.AverageDurationMinutes).SingleOrDefaultAsync(ct);
         var activeAttendants = await ActiveAttendantsAsync(ticket.QueueId, ignoreQueryFilters: true, ct);
         var queuePublicId = await db.Queues.IgnoreQueryFilters().Where(x => x.Id == ticket.QueueId).Select(x => x.PublicId).SingleOrDefaultAsync(ct) ?? publicId;
@@ -226,7 +226,7 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var ticket = await db.QueueTickets.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.CustomerPublicToken == token, ct);
         if (ticket is null) return Result.Failure<PublicTicketDto>(new("ticket.not_found", "A senha não foi encontrada."));
         var ahead = ticket.Status == TicketStatus.Waiting
-            ? await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == ticket.OrganizationId && x.QueueId == ticket.QueueId && x.Status == TicketStatus.Waiting && x.SequenceNumber < ticket.SequenceNumber, ct)
+            ? await tickets.GetTicketsAheadAsync(ticket.OrganizationId, ticket.QueueId, ticket.Id, ct)
             : 0;
         var average = await db.Services.IgnoreQueryFilters().Where(x => x.Id == ticket.ServiceId).Select(x => x.AverageDurationMinutes).SingleAsync(ct);
         var activeAttendants = await ActiveAttendantsAsync(ticket.QueueId, ignoreQueryFilters: true, ct);
@@ -268,8 +268,31 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var userId = currentUser.UserId ?? throw new UnauthorizedAccessException();
         var ticket = await db.QueueTickets.SingleOrDefaultAsync(x => x.Id == id && x.AttendantUserId == userId, ct);
         if (ticket is null) return Result.Failure<TicketDto>(new("ticket.not_found", "O ticket não pertence ao atendente atual."));
-        transition(ticket); db.TicketEvents.Add(new(Guid.NewGuid(), Tenant, ticket.Id, ticket.Status, reason, clock.UtcNow)); audit?.Write($"ticket.{ticket.Status.ToString().ToLowerInvariant()}", "Ticket", ticket.Id); await db.SaveChangesAsync(ct); await PublishTicketStateAsync(ticket, eventName ?? EventName(ticket.Status), ct); return Result.Success(Map(ticket));
+        transition(ticket);
+        db.TicketEvents.Add(new(Guid.NewGuid(), Tenant, ticket.Id, ticket.Status, reason, clock.UtcNow));
+        audit?.Write($"ticket.{ticket.Status.ToString().ToLowerInvariant()}", "Ticket", ticket.Id);
+        if (ticket.Status == TicketStatus.Completed) await CompleteLinkedAppointmentAsync(ticket, ct);
+        await db.SaveChangesAsync(ct);
+        await PublishTicketStateAsync(ticket, eventName ?? EventName(ticket.Status), ct);
+        return Result.Success(Map(ticket));
     }
+    private async Task CompleteLinkedAppointmentAsync(QueueTicket ticket, CancellationToken ct)
+    {
+        var appointment = await db.Appointments.SingleOrDefaultAsync(x => x.OrganizationId == ticket.OrganizationId && x.QueueTicketId == ticket.Id, ct);
+        if (appointment is null || appointment.Status == AppointmentStatus.Completed) return;
+
+        var now = clock.UtcNow;
+        var previous = appointment.Status;
+        appointment.Complete(now);
+        db.AppointmentStatusHistory.Add(new AppointmentStatusHistory(Guid.NewGuid(), ticket.OrganizationId, appointment.Id,
+            previous, appointment.Status, currentUser.UserId, "Atendimento da senha concluído", now));
+        audit?.Write("appointment.completed", "Appointment", appointment.Id,
+            new { QueueTicketId = ticket.Id, PreviousStatus = previous.ToString(), Status = appointment.Status.ToString() });
+        db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), ticket.OrganizationId, "appointment.realtime",
+            JsonSerializer.Serialize(new { eventName = "appointment.completed", appointmentToken = appointment.PublicToken,
+                appointmentId = appointment.Id, appointment.ServiceId, status = appointment.Status.ToString(), appointment.ScheduledStart }), now));
+    }
+
     private async Task PublishTicketStateAsync(QueueTicket ticket, string eventName, CancellationToken ct)
     {
         var queuePublicId = await db.Queues.IgnoreQueryFilters().Where(x => x.Id == ticket.QueueId).Select(x => x.PublicId).SingleAsync(ct);
