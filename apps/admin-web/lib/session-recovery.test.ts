@@ -105,3 +105,38 @@ it('retains a lock until a pending response is consumed after unmount', async ()
   expect(await pending).toBe('unavailable');
   expect(options.onNavigate).not.toHaveBeenCalled();
 });
+
+
+it('coalesces concurrent recovery without Web Locks and preserves each destination', async () => {
+  const { recoverSession, options, fetch } = await setup();
+  vi.stubGlobal('navigator', {});
+  let complete!: (response: Response) => void;
+  fetch.mockReturnValue(new Promise<Response>(resolve => { complete = resolve; }));
+  const secondOptions = { ...options, onNavigate: vi.fn() };
+  const first = recoverSession('/reports', options);
+  const second = recoverSession('/dashboard', secondOptions);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  complete(Response.json({ redirectTo: '/reports' }));
+  expect(await first).toBe('navigated');
+  expect(await second).toBe('navigated');
+  expect(options.onNavigate).toHaveBeenCalledWith('/reports');
+  expect(secondOptions.onNavigate).toHaveBeenCalledWith('/dashboard');
+});
+
+it('a remount joins an unfinished renewal even after the first caller aborts', async () => {
+  const { recoverSession, options, fetch } = await setup();
+  vi.stubGlobal('navigator', {});
+  let complete!: (response: Response) => void;
+  fetch.mockReturnValue(new Promise<Response>(resolve => { complete = resolve; }));
+  const controller = new AbortController();
+  const first = recoverSession('/reports', { ...options, signal: controller.signal });
+  await vi.advanceTimersByTimeAsync(1);
+  controller.abort();
+  const second = recoverSession('/reports', options);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  complete(Response.json({ redirectTo: '/reports' }));
+  expect(await first).toBe('unavailable');
+  expect(await second).toBe('navigated');
+});

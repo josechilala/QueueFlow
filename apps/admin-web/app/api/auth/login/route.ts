@@ -10,7 +10,7 @@ function failure(status: number, upstream?: Response, endpoint = '/api/v1/auth/l
   const retryAfter = upstream?.headers.get('Retry-After');
   if (retryAfter) headers.set('Retry-After', retryAfter);
   const policy = upstream?.headers.get('X-RateLimit-Policy');
-  if (status === 429 && policy && ['auth', 'global', 'refresh'].includes(policy)) headers.set('X-RateLimit-Policy', policy);
+  if (status === 429 && policy && ['auth', 'login', 'login-input', 'global', 'refresh'].includes(policy)) headers.set('X-RateLimit-Policy', policy);
   if (status === 429) {
     headers.set('X-RateLimit-Endpoint', endpoint);
     console.warn(JSON.stringify({ event: 'admin_login_rate_limited', endpoint,

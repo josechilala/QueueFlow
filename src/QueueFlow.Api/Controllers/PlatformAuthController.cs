@@ -1,3 +1,5 @@
+using QueueFlow.Api.Middleware;
+using QueueFlow.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -8,11 +10,13 @@ namespace QueueFlow.Api.Controllers;
 
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 [ApiController, Route("api/v1/platform/auth")]
-public sealed class PlatformAuthController(PlatformAuthService auth) : ControllerBase
+public sealed class PlatformAuthController(PlatformAuthService auth, LoginProtection protection) : ControllerBase
 {
-    [HttpPost("login"), EnableRateLimiting("auth")]
-    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
-    [HttpPost("refresh"), EnableRateLimiting("refresh")]
+    [HttpPost("login"), EnableRateLimiting("login-input")]
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) =>
+        this.LoginResponse(await protection.ExecuteAsync(IdentityType.Platform, request.Email,
+            token => auth.LoginAsync(request.Email, request.Password, token), ct));
+    [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct)
     {
         var result = await auth.RefreshAsync(request.RefreshToken, ct);

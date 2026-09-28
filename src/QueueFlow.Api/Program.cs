@@ -58,6 +58,7 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddAuthenticationProtection(builder.Configuration, builder.Environment);
 if (!args.Contains("--migrate-only", StringComparer.Ordinal) && !args.Contains("--healthcheck", StringComparer.Ordinal)) builder.Services.AddQueueRealtimeProcessing().AddAppointmentReceiptProcessing();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<TenantService>();
@@ -133,7 +134,6 @@ builder.Services.AddRateLimiter(options =>
     var publicPermitLimit = builder.Configuration.GetValue("RateLimiting:PublicPermitLimit", 30);
     var trialRequestPermitLimit = builder.Configuration.GetValue("RateLimiting:TrialRequestPermitLimit", 5);
     var authPermitLimit = builder.Configuration.GetValue("RateLimiting:AuthPermitLimit", 10);
-    var refreshPermitLimit = builder.Configuration.GetValue("RateLimiting:RefreshPermitLimit", 30);
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = (context, _) =>
     {
@@ -142,13 +142,17 @@ builder.Services.AddRateLimiter(options =>
         RateLimitDiagnostics.Rejected(context.HttpContext);
         return ValueTask.CompletedTask;
     };
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => RateLimitPartition.GetFixedWindowLimiter(
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => LoginRateLimitKeyMiddleware.IsAuthenticationEndpoint(context)
+        ? RateLimitPartition.GetNoLimiter("authentication") : RateLimitPartition.GetFixedWindowLimiter(
         RateLimitDiagnostics.Partition(context, "global", LoginRateLimitKeyMiddleware.GlobalPartitionKey(context)),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = globalPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("public", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "public", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions { PermitLimit = publicPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("trial-requests", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "trial-requests", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions { PermitLimit = trialRequestPermitLimit, Window = TimeSpan.FromMinutes(10), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "auth", LoginRateLimitKeyMiddleware.PartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("refresh", context => RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "refresh", LoginRateLimitKeyMiddleware.RefreshPartitionKey(context)), _ => new FixedWindowRateLimiterOptions { PermitLimit = refreshPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("login-input", context => LoginRateLimitKeyMiddleware.HasLoginCredentials(context)
+        ? RateLimitPartition.GetNoLimiter("valid-login-input")
+        : RateLimitPartition.GetFixedWindowLimiter(RateLimitDiagnostics.Partition(context, "login-input", context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 builder.Services
     .AddHealthChecks()
@@ -231,6 +235,7 @@ app.UseCors("web");
 app.UseAuthentication();
 app.UseMiddleware<LoginRateLimitKeyMiddleware>();
 app.UseRateLimiter();
+app.UseMiddleware<RefreshRateLimitMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();

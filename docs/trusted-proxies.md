@@ -1,22 +1,11 @@
 # IP do cliente e limite de login
 
-O limiter `auth` permanece com o padrão de 10 requisições por minuto. Nos logins
-tenant e platform, a chave combina o IP efetivo da conexão com SHA-256 do e-mail
-normalizado (`Trim().ToLowerInvariant()`). E-mails diferentes atrás do mesmo BFF
-não dividem essa cota. O corpo JSON é limitado a 16 KiB e preservado para o controller;
-corpos maiores recebem 413. Credenciais não são registradas.
-
-Sem e-mail utilizável, e nos demais endpoints `auth`, a cota continua por IP.
-Refresh usa uma política separada, `RateLimiting:RefreshPermitLimit` (padrão 30/min),
-por identidade verificável nos novos tokens assinados. Tokens opacos antigos
-continuam por SHA-256 do token até sua renovação; entradas sem token usam IP.
-O limite global permanece em 300/min por padrão, com identidade assinada para
-refresh e usuário autenticado/IP nos demais casos. Tokens forjados continuam
-sujeitos à cota global por IP. Respostas 429 incluem `Retry-After`.
-
-No Render Free, essa separação de cotas funciona pela URL pública da API sem
-depender do IP real do navegador. Requisições anônimas e tokens opacos antigos
-ainda compartilham o limite global pelo IP disponível do ingresso/BFF.
+Login usa uma cota de **falhas de credenciais**, separada de refresh e do limite
+global por IP. Consulte [a protecao de autenticacao](authentication-throttling.md)
+para contagem, reset, estado Redis e configuracao. O corpo JSON continua limitado
+a 16 KiB e preservado para o controller; corpos maiores recebem 413. Credenciais
+nao sao registradas. O encaminhamento seguro de IP abaixo permanece necessario
+para endpoints publicos e entradas de autenticacao malformadas.
 
 ## Admin BFF
 
@@ -67,18 +56,12 @@ tenant/platform, usuário, validade e 64 bytes aleatérios. O envelope NÃO é u
 access token e NÃO autoriza operações: a API ainda exige o hash exato persistido,
 usuário ativo, validade e rotação única sob `FOR UPDATE`.
 
-Somente assinatura e validade verificadas permitem escolher as cotas global e
-refresh por identidade, independentemente do IP do BFF. Rotações e novos logins
-do mesmo usuário não reiniciam essas cotas. Os limites continuam 300/min global,
-30/min refresh e 10/min login por padrão. Assinaturas falsas, identidades de outro
-propósito e entradas malformadas continuam na proteção global por IP. Não há
-consulta ao banco antes do limiter, nem confiança em headers enviados pelo cliente.
-
-Compatibilidade: tokens opacos já emitidos continuam funcionando sob as cotas
-anteriores por IP/token até a primeira renovação ou novo login, quando recebem
-o novo formato. Nenhuma migration ou invalidação geral de sessões é necessária.
-A API deve ser implantada antes de avaliar a separação das cotas em sessões novas;
-issuer, audience e chave JWT devem permanecer consistentes entre instâncias.
+Somente assinatura e validade verificadas permitem escolher a cota de refresh por
+identidade, independentemente do IP do BFF. Rotacoes e novos logins nao reiniciam
+essa cota. Tokens opacos, forjados ou malformados compartilham a cota de refresh por
+IP ate receberem um envelope verificavel. A API ainda valida o token no banco;
+a assinatura so determina a particao. Issuer, audience e chave JWT devem permanecer
+consistentes entre instancias. Nenhuma migration ou invalidacao geral e necessaria.
 
 Toda rejeição registra política, template do endpoint (sem valores dos parâmetros
 ou query string), correlation ID, RetryAfter, IP resolvido, peer original e
@@ -101,41 +84,15 @@ Esse endpoint é uma constante local; headers arbitrários do upstream não defi
 o valor. Política ausente/desconhecida é registrada como `unknown`, sem atribuir
 automaticamente a rejeição à API ou ao Render.
 
-Configurações padrão no código (overrides do ambiente de produção precisam ser conferidos):
+O login nao consome mais a cota global compartilhada do BFF nem contabiliza
+sucessos como falhas. LoginForm impede submit concorrente e nao repete o POST.
+O BFF faz uma autenticacao, seguida das consultas autenticadas descritas acima.
+Essas consultas continuam sujeitas ao limite global por usuario autenticado.
+A recuperacao de sessao compartilha a requisicao em andamento na aba, usa Web Locks
+entre abas quando disponivel e respeita cooldown e no maximo tres tentativas.
 
-| Política | PermitLimit | Window | QueueLimit | Partição |
-| --- | ---: | --- | ---: | --- |
-| global | 300 | 1 minuto | 0 | identidade verificável no refresh; senão NameIdentifier autenticado; senão IP/unknown |
-| auth | 10 | 1 minuto | 0 | login: IP + SHA-256 do e-mail normalizado; demais casos: IP |
-| refresh | 30 | 1 minuto | 0 | identidade verificável; senão hash do token; senão IP |
-| public | 30 | 1 minuto | 0 | IP/unknown |
-| trial-requests | 5 | 10 minutos | 0 | IP/unknown |
-
-São fixed windows com reposição automática. O global é adquirido primeiro, depois
-a política do endpoint. Não existe limiter no servidor Next: há bloqueio de submit
-concorrente e cooldown no formulário, sem repetição automática do POST. O middleware
-de navegação do Admin não intercepta `/login` nem `/api/auth/login`.
-`auth` é compartilhada entre login tenant/platform quando IP e e-mail coincidem.
-Todas as tentativas consomem quota, inclusive credenciais corretas: o limiter roda
-antes do controller e da verificação da senha. Não se trata de bloqueio persistido
-na conta por número de senhas erradas.
-
-O teste `SharedProxyGlobalBudgetCanBlockAnEmailWithNoPreviousLoginAttempts`
-reproduz o risco: requisições anônimas do mesmo IP esgotam o global e bloqueiam um
-e-mail novo mesmo sem esgotar `auth`. Separar e-mails em `auth` não elimina esse
-compartilhamento global. O teste usa limite global reduzido apenas no host de teste.
-
-Sem `QUEUEFLOW_TRUSTED_PROXIES` no Admin e sem `ReverseProxy:KnownProxies`/
-`KnownNetworks` na API, cada camada usa seu peer TCP. Mesmo com trust configurado,
-ForwardLimit insuficiente pode parar no BFF/proxy intermediário. Não há configuração
-de produção versionada que permita afirmar quais IPs estão sendo usados no Render.
-Conferir cadeia real, comando de início do Admin, valores efetivos das cinco
-configurações `RateLimiting:*PermitLimit` e logs da mesma tentativa antes de alterar
-trust ou limites. Nunca confiar em `/0` ou simplesmente no primeiro IP do header.
-
-Os limiters são locais à memória do processo, sem Redis/banco. Restart/deploy reinicia
-as cotas; múltiplas instâncias mantêm contadores independentes. Cold start pode
-adicionar latência, mas não esgota sozinho uma quota recém-criada. Um bloqueio depois
-de inatividade exige verificar tráfego concorrente, configuração, etapa exata e
-eventual rejeição no ingresso. Não foi comprovada a causa específica de produção
-apenas pelo sintoma de 429 com Retry-After.
+Os limites de login e refresh usam Redis fora de Development/Test. As demais
+politicas continuam locais. A configuracao e os testes estao documentados em
+[protecao de autenticacao](authentication-throttling.md). A causa de uma rejeicao
+externa no ingresso precisa ser verificada nos logs desse ambiente; nenhuma
+configuracao de producao foi alterada por esta correcao.

@@ -1,3 +1,5 @@
+using QueueFlow.Api.Middleware;
+using QueueFlow.Domain.Enums;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
@@ -8,7 +10,7 @@ namespace QueueFlow.Api.Controllers;
 
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 [ApiController, Route("api/v1/auth")]
-public sealed class AuthController(AuthService auth, TenantService tenants, IConfiguration configuration, IHostEnvironment environment) : ControllerBase
+public sealed class AuthController(AuthService auth, LoginProtection protection, TenantService tenants, IConfiguration configuration, IHostEnvironment environment) : ControllerBase
 {
     [HttpPost("register"), EnableRateLimiting("auth")]
     public async Task<IActionResult> Register(CreateOrganizationCommand request, CancellationToken ct)
@@ -18,9 +20,11 @@ public sealed class AuthController(AuthService auth, TenantService tenants, ICon
         var result = await tenants.CreateOrganizationAsync(request, ct);
         return result.IsSuccess ? Created(string.Empty, result.Value) : Problem(result.Error.Description, statusCode: 400);
     }
-    [HttpPost("login"), EnableRateLimiting("auth")]
-    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) { var result = await auth.LoginAsync(request.Email, request.Password, ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
-    [HttpPost("refresh"), EnableRateLimiting("refresh")]
+    [HttpPost("login"), EnableRateLimiting("login-input")]
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct) =>
+        this.LoginResponse(await protection.ExecuteAsync(IdentityType.Tenant, request.Email,
+            token => auth.LoginAsync(request.Email, request.Password, token), ct));
+    [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken ct)
     {
         var result = await auth.RefreshAsync(request.RefreshToken, ct);
@@ -32,5 +36,7 @@ public sealed class AuthController(AuthService auth, TenantService tenants, ICon
     public async Task<IActionResult> Me(CancellationToken ct) { var result = await auth.GetCurrentAsync(ct); return result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: StatusCodes.Status401Unauthorized); }
 }
 
-public sealed record LoginRequest(string Email, string Password);
+public sealed record LoginRequest(
+    [System.ComponentModel.DataAnnotations.Required] string Email,
+    [System.ComponentModel.DataAnnotations.Required] string Password);
 public sealed record RefreshRequest(string RefreshToken);

@@ -1,10 +1,10 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using QueueFlow.Api.Controllers;
 using QueueFlow.Application.Abstractions.Authentication;
 using QueueFlow.Domain.Enums;
+using QueueFlow.Application.Features.Auth;
 
 namespace QueueFlow.Api.Middleware;
 
@@ -12,7 +12,17 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
 {
     private const int MaxBodyBytes = 16 * 1024;
     private static readonly object EmailHashKey = new();
-    private static readonly object RefreshHashKey = new();
+    private static readonly object LoginCredentialsKey = new();
+
+    public static bool IsAuthenticationEndpoint(HttpContext context) => IsAction(context, "Login") || IsAction(context, "Refresh");
+    public static bool IsRefresh(HttpContext context) => IsAction(context, "Refresh");
+    public static bool HasLoginCredentials(HttpContext context) => context.Items.ContainsKey(LoginCredentialsKey);
+    private static bool IsAction(HttpContext context, string name)
+    {
+        var action = context.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
+        return HttpMethods.IsPost(context.Request.Method) && action?.ActionName == name &&
+            (action.ControllerTypeInfo.AsType() == typeof(AuthController) || action.ControllerTypeInfo.AsType() == typeof(PlatformAuthController));
+    }
     private static readonly object RefreshIdentityKey = new();
 
     public static string GlobalPartitionKey(HttpContext context) =>
@@ -20,13 +30,12 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
         context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     public static string RefreshPartitionKey(HttpContext context) => context.Items.TryGetValue(RefreshIdentityKey, out var identity)
-        ? $"refresh-user:{identity}" : context.Items.TryGetValue(RefreshHashKey, out var hash)
-        ? $"refresh:{hash}" : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        ? $"refresh-user:{identity}" : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 
     public static string PartitionKey(HttpContext context)
     {
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return context.Items.TryGetValue(EmailHashKey, out var hash) ? $"login:{ip}:{hash}" : $"ip:{ip}";
+        return context.Items.TryGetValue(EmailHashKey, out var hash) ? $"{hash}" : $"ip:{ip}";
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -62,15 +71,21 @@ public sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
                     // Match MVC's case-insensitive, last-property-wins JSON binding.
                     var isRefresh = action.ActionName == "Refresh";
                     JsonElement email = default;
+                    JsonElement password = default;
                     foreach (var property in document.RootElement.EnumerateObject())
+                    {
                         if (property.Name.Equals(isRefresh ? "refreshToken" : "email", StringComparison.OrdinalIgnoreCase)) email = property.Value;
+                        if (property.Name.Equals("password", StringComparison.OrdinalIgnoreCase)) password = property.Value;
+                    }
+                    if (!isRefresh && email.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(email.GetString()) &&
+                        password.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(password.GetString())) context.Items[LoginCredentialsKey] = true;
                     if (email.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(email.GetString()))
                     {
                         var normalized = isRefresh ? email.GetString()! : email.GetString()!.Trim().ToLowerInvariant();
-                        context.Items[isRefresh ? RefreshHashKey : EmailHashKey] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+                        var kind = action.ControllerTypeInfo.AsType() == typeof(PlatformAuthController) ? IdentityType.Platform : IdentityType.Tenant;
+                        if (!isRefresh) context.Items[EmailHashKey] = LoginProtection.PartitionKey(kind, normalized);
                         if (isRefresh)
                         {
-                            var kind = action.ControllerTypeInfo.AsType() == typeof(PlatformAuthController) ? IdentityType.Platform : IdentityType.Tenant;
                             var userId = context.RequestServices?.GetService<ITokenService>()?.GetRefreshRateLimitIdentity(normalized, kind);
                             if (userId is not null) context.Items[RefreshIdentityKey] = $"{kind}:{userId:N}";
                         }

@@ -22,19 +22,12 @@ public sealed class LoginIdentityRateLimitTests
     [Theory]
     [InlineData("/api/v1/auth/login")]
     [InlineData("/api/v1/platform/auth/login")]
-    public async Task SharedBffIpHasSeparateEmailQuotasAndNormalizedEmailsCannotBypass(string path)
+    public async Task ValidLoginInputDoesNotConsumeRequestOrGlobalQuotas(string path)
     {
         await using var root = new QueueFlowApiFactory();
-        await using var factory = CreateFactory(root);
-        // Missing password exercises the real login endpoint without a database dependency.
-        for (var attempt = 0; attempt < 10; attempt++)
-            Assert.Equal(400, await Send(factory, path, "{\"email\":\"owner@example.test\"}"));
-        Assert.Equal(429, await Send(factory, path, "{\"EMAIL\":\"  OWNER@EXAMPLE.TEST  \"}"));
-        Assert.Equal(429, await Send(factory, path, "{\"email\":\"different@example.test\",\"Email\":\"owner@example.test\"}"));
-        Assert.Equal(429, await Send(factory, path, "{\"email\":\"owner@example.test\"}", encoding: Encoding.Unicode));
-        Assert.Equal(400, await Send(factory, path, "{\"email\":\"other@example.test\"}"));
-        Assert.Equal(400, await Send(factory, path, "{\"email\":\"owner@example.test\"}", peer: "198.51.100.2"));
-        Assert.Equal(429, await Send(factory, path, "{\"email\":\"owner@example.test\"}", forwarded: "192.0.2.250"));
+        await using var factory = CreateFactory(root, globalLimit: 2);
+        for (var attempt = 0; attempt < 20; attempt++)
+            Assert.Equal(204, await Send(factory, path, "{\"email\":\"owner@example.test\",\"password\":\"valid-input\"}"));
     }
 
     [Fact]
@@ -49,11 +42,11 @@ public sealed class LoginIdentityRateLimitTests
         for (var attempt = 0; attempt < 30; attempt++)
             Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
         Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", "{}"));
-        Assert.Equal(400, await Send(factory, "/api/v1/auth/login", "{\"email\":\"other@example.test\"}"));
+        Assert.Equal(204, await Send(factory, "/api/v1/auth/login", "{\"email\":\"other@example.test\",\"password\":\"valid-input\"}"));
     }
 
     [Fact]
-    public async Task RefreshPartitionIsPerTokenWithoutLoggingSecretsOrTrustingForwardedIp()
+    public async Task UnsignedRefreshTokensShareSourceBudgetWithoutLoggingSecrets()
     {
         async Task<string> Key(string token)
         {
@@ -73,34 +66,34 @@ public sealed class LoginIdentityRateLimitTests
                 Assert.Equal(body, await reader.ReadToEndAsync());
             }).InvokeAsync(context);
             var key = LoginRateLimitKeyMiddleware.RefreshPartitionKey(context);
-            Assert.StartsWith("refresh:", key);
+            Assert.StartsWith("ip:", key);
             Assert.DoesNotContain(token, key);
             return key;
         }
         Assert.Equal(await Key("secret-A"), await Key("secret-A"));
-        Assert.NotEqual(await Key("secret-A"), await Key("secret-a"));
-        Assert.NotEqual(await Key("secret-A"), await Key("secret-B"));
+        Assert.Equal(await Key("secret-A"), await Key("secret-a"));
+        Assert.Equal(await Key("secret-A"), await Key("secret-B"));
     }
 
     [Fact]
-    public async Task GlobalIpLimitStillCapsRotatingEmails()
+    public async Task MalformedLoginBudgetStillCapsRotatingEmails()
     {
         await using var root = new QueueFlowApiFactory();
         await using var factory = CreateFactory(root, globalLimit: 12);
-        for (var attempt = 0; attempt < 12; attempt++)
+        for (var attempt = 0; attempt < 10; attempt++)
             Assert.Equal(400, await Send(factory, "/api/v1/auth/login", JsonSerializer.Serialize(new { email = $"user{attempt}@example.test" })));
         Assert.Equal(429, await Send(factory, "/api/v1/auth/login", "{\"email\":\"another@example.test\"}"));
     }
 
     [Fact]
-    public async Task SharedProxyGlobalBudgetCanBlockAnEmailWithNoPreviousLoginAttempts()
+    public async Task RefreshRequestsCannotSpendTheLoginBudget()
     {
         await using var root = new QueueFlowApiFactory();
         await using var factory = CreateFactory(root, globalLimit: 2);
-        // Even malformed refresh requests spend the same anonymous global IP budget.
+        // Login and refresh budgets remain independent behind a shared BFF IP.
         Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
         Assert.Equal(400, await Send(factory, "/api/v1/auth/refresh", "{}"));
-        Assert.Equal(429, await Send(factory, "/api/v1/auth/login", "{\"email\":\"new@example.test\"}", expectedPolicy: "global"));
+        Assert.Equal(400, await Send(factory, "/api/v1/auth/login", "{\"email\":\"new@example.test\"}"));
         Assert.Equal(400, await Send(factory, "/api/v1/auth/login", "{\"email\":\"new@example.test\"}", peer: "198.51.100.2"));
     }
 
@@ -131,7 +124,7 @@ public sealed class LoginIdentityRateLimitTests
             using var reader = new StreamReader(current.Request.Body);
             Assert.Equal(body, await reader.ReadToEndAsync());
             var key = LoginRateLimitKeyMiddleware.PartitionKey(current);
-            Assert.StartsWith("login:unknown:", key);
+            Assert.StartsWith("Tenant:", key);
             Assert.DoesNotContain("example", key, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("unchanged-secret", key);
         }).InvokeAsync(context);
@@ -139,11 +132,11 @@ public sealed class LoginIdentityRateLimitTests
     }
 
     [Fact]
-    public async Task SignedRefreshUsersDoNotShareBffGlobalQuotaAndRotationDoesNotResetQuota()
+    public async Task SignedRefreshUsersHaveSeparateBudgetsAndRotationDoesNotResetQuota()
     {
         await using var root = new QueueFlowApiFactory();
         await using var factory = CreateFactory(root, globalLimit: 2).WithWebHostBuilder(builder =>
-            builder.ConfigureServices(services => services.Configure<MvcOptions>(options => options.Filters.Add(new StopBeforeDatabase()))));
+            builder.UseSetting("RateLimiting:RefreshPermitLimit", "2"));
         var tokens = factory.Services.GetRequiredService<ITokenService>();
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
@@ -152,15 +145,15 @@ public sealed class LoginIdentityRateLimitTests
             Assert.Equal(204, await Send(factory, "/api/v1/auth/refresh", JsonSerializer.Serialize(new { refreshToken = tokens.CreateRefreshToken(first, IdentityType.Tenant) })));
             Assert.Equal(204, await Send(factory, "/api/v1/auth/refresh", JsonSerializer.Serialize(new { refreshToken = tokens.CreateRefreshToken(second, IdentityType.Tenant) })));
         }
-        Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", JsonSerializer.Serialize(new { refreshToken = tokens.CreateRefreshToken(first, IdentityType.Tenant) }), expectedPolicy: "global"));
+        Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", JsonSerializer.Serialize(new { refreshToken = tokens.CreateRefreshToken(first, IdentityType.Tenant) }), expectedPolicy: "refresh"));
     }
 
     [Fact]
-    public async Task ForgedRefreshIdentitiesStillShareGlobalIpQuota()
+    public async Task ForgedRefreshIdentitiesStillShareRefreshIpQuota()
     {
         await using var root = new QueueFlowApiFactory();
         await using var factory = CreateFactory(root, globalLimit: 2).WithWebHostBuilder(builder =>
-            builder.ConfigureServices(services => services.Configure<MvcOptions>(options => options.Filters.Add(new StopBeforeDatabase()))));
+            builder.UseSetting("RateLimiting:RefreshPermitLimit", "2"));
         var tokens = factory.Services.GetRequiredService<ITokenService>();
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -214,6 +207,7 @@ public sealed class LoginIdentityRateLimitTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("RateLimiting:AuthPermitLimit", "10");
+            builder.ConfigureServices(services => services.Configure<MvcOptions>(options => options.Filters.Add(new StopBeforeDatabase())));
             builder.UseSetting("RateLimiting:GlobalPermitLimit", globalLimit.ToString(System.Globalization.CultureInfo.InvariantCulture));
         });
 
@@ -237,7 +231,7 @@ public sealed class LoginIdentityRateLimitTests
         if (result.Response.StatusCode == 429)
         {
             if (expectedPolicy is not null) Assert.Equal(expectedPolicy, result.Response.Headers["X-RateLimit-Policy"].ToString());
-            Assert.True(result.Response.Headers["X-RateLimit-Policy"].ToString() is "global" or "auth" or "refresh");
+            Assert.True(result.Response.Headers["X-RateLimit-Policy"].ToString() is "global" or "auth" or "login" or "login-input" or "refresh");
             Assert.True(int.TryParse(result.Response.Headers.RetryAfter, out var seconds) && seconds > 0);
         }
         return result.Response.StatusCode;

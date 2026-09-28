@@ -25,5 +25,6 @@ public interface ITokenService
 public interface IPasswordService
 {
     string Hash(string password);
-    bool Verify(string hash, string password);
+    // A missing hash must still perform password verification work and return false.
+    bool Verify(string? hash, string password);
 }

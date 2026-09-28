@@ -18,7 +18,8 @@ public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, 
         var normalizedEmail = email.Trim().ToLowerInvariant();
         var matches = await db.Users.IgnoreQueryFilters().Where(x => x.Email == normalizedEmail).Take(2).ToListAsync(ct);
         var user = matches.Count == 1 ? matches[0] : null;
-        if (user is null || !user.IsActive || !passwords.Verify(user.PasswordHash, password)) return Result.Failure<TokenPair>(new("auth.invalid_credentials", "Invalid credentials."));
+        var verified = passwords.Verify(user?.PasswordHash, password);
+        if (user is null || !user.IsActive || !verified) return Result.Failure<TokenPair>(new("auth.invalid_credentials", "Invalid credentials."));
         return await CreatePairAsync(user, ct);
     }
     public async Task<Result<TokenPair>> RefreshAsync(string refreshToken, CancellationToken ct)

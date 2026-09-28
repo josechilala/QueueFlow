@@ -15,7 +15,8 @@ public sealed class PlatformAuthService(IApplicationDbContext db, ITokenService 
     {
         var normalized = email?.Trim().ToLowerInvariant() ?? string.Empty;
         var user = await db.PlatformUsers.SingleOrDefaultAsync(x => x.Email == normalized, ct);
-        if (user is null || !user.IsActive || !passwords.Verify(user.PasswordHash, password)) return Result.Failure<TokenPair>(new("platform.invalid_credentials", "Invalid credentials."));
+        var verified = passwords.Verify(user?.PasswordHash, password);
+        if (user is null || !user.IsActive || !verified) return Result.Failure<TokenPair>(new("platform.invalid_credentials", "Invalid credentials."));
         return await CreatePairAsync(user, ct);
     }
 

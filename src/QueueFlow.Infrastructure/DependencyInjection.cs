@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using QueueFlow.Application.Features.Auth;
+using StackExchange.Redis;
 using Microsoft.Extensions.DependencyInjection;
 using QueueFlow.Application.Abstractions.Clock;
 using QueueFlow.Application.Abstractions.Authentication;
@@ -45,6 +48,34 @@ public static class DependencyInjection
         services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddSingleton<IClock, SystemClock>();
 
+        return services;
+    }
+
+    public static IServiceCollection AddAuthenticationProtection(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        var local = environment.IsDevelopment() || environment.IsEnvironment("Test");
+        var useRedis = configuration.GetValue("RateLimiting:UseRedis", !local);
+        if (!local && !useRedis) throw new InvalidOperationException("Distributed authentication protection requires Redis outside Development/Test.");
+        var limit = configuration.GetValue("RateLimiting:AuthPermitLimit", 10);
+        if (configuration.GetValue("RateLimiting:RefreshPermitLimit", 30) <= 0)
+            throw new InvalidOperationException("The refresh request limit must be positive.");
+        if (limit <= 0) throw new InvalidOperationException("The authentication failure limit must be positive.");
+        services.AddSingleton(new LoginProtectionOptions { FailureLimit = limit });
+        services.AddScoped<LoginProtection>();
+        if (useRedis)
+        {
+            var connection = configuration["Redis:ConnectionString"];
+            if (string.IsNullOrWhiteSpace(connection)) throw new InvalidOperationException("Redis:ConnectionString is required for distributed authentication protection.");
+            services.AddSingleton<IConnectionMultiplexer>(_ =>
+            {
+                var options = ConfigurationOptions.Parse(connection);
+                options.AbortOnConnectFail = false;
+                options.ConnectTimeout = 2000; options.SyncTimeout = 2000; options.AsyncTimeout = 2000; options.ConnectRetry = 0;
+                return ConnectionMultiplexer.Connect(options);
+            });
+            services.AddSingleton<IAuthenticationThrottleStore, RedisAuthenticationThrottleStore>();
+        }
+        else services.AddSingleton<IAuthenticationThrottleStore>(_ => new InMemoryAuthenticationThrottleStore(TimeProvider.System));
         return services;
     }
 
