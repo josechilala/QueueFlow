@@ -9,6 +9,15 @@ public sealed class AppointmentTests
     private static readonly DateTimeOffset Start = new(2026, 8, 27, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void NewReservationStartsConfirmedAndCanCheckInWithoutManualApproval()
+    {
+        var appointment = new Appointment(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Cliente", null, "cliente@example.test", Start, Start.AddMinutes(30), "UTC", Start.AddDays(-1));
+        Assert.Equal(AppointmentStatus.Confirmed, appointment.Status);
+        appointment.CheckIn(Guid.NewGuid(), Start);
+        Assert.Equal(AppointmentStatus.CheckedIn, appointment.Status);
+    }
+
+    [Fact]
     public void AppointmentWithoutRequiredConfirmationStartsConfirmed()
     {
         var appointment = Create(requireConfirmation: false);
@@ -31,6 +40,27 @@ public sealed class AppointmentTests
     {
         var appointment = Create();
         appointment.CheckIn(Guid.NewGuid(), Start);
+        Assert.Throws<DomainException>(() => appointment.CheckIn(Guid.NewGuid(), Start));
+    }
+
+    [Fact]
+    public void LegacyReservationCanCheckInWithoutApprovalOnlyOnce()
+    {
+        var appointment = Create(requireConfirmation: true);
+        Assert.Equal(AppointmentStatus.Scheduled, appointment.Status);
+        var ticketId = Guid.NewGuid();
+        appointment.CheckIn(ticketId, Start);
+        Assert.Equal(AppointmentStatus.CheckedIn, appointment.Status);
+        Assert.Equal(ticketId, appointment.QueueTicketId);
+        Assert.Throws<DomainException>(() => appointment.CheckIn(Guid.NewGuid(), Start));
+    }
+
+    [Fact]
+    public void LegacyReservationCanBeMarkedAbsentWithoutApproval()
+    {
+        var appointment = Create(requireConfirmation: true);
+        appointment.MarkNoShow(Start);
+        Assert.Equal(AppointmentStatus.NoShow, appointment.Status);
         Assert.Throws<DomainException>(() => appointment.CheckIn(Guid.NewGuid(), Start));
     }
 

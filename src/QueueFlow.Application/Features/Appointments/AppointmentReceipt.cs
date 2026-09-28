@@ -32,7 +32,7 @@ public sealed record AppointmentReceipt(Guid AppointmentId, string Email, string
         var service = await db.Services.IgnoreQueryFilters().AsNoTracking().Where(x => x.Id == appointment.ServiceId && x.OrganizationId == tenant).Select(x => x.Name).SingleAsync(ct);
         var receipt = new AppointmentReceipt(appointment.Id, appointment.CustomerEmail!, appointment.CustomerName,
             organization, branch, service, appointment.ScheduledStart, appointment.TimeZone, appointment.PublicToken);
-        // One durable message per appointment, committed atomically with the booking/confirmation.
+        // One durable message per appointment, committed atomically with the accepted booking.
         db.OutboxMessages.Add(new OutboxMessage(appointment.Id, tenant, OutboxType, JsonSerializer.Serialize(receipt), now));
     }
 }

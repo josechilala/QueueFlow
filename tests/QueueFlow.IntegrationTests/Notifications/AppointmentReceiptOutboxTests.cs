@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using QueueFlow.Application.Abstractions.Auditing;
 using QueueFlow.Application.Abstractions.Authentication;
 using QueueFlow.Application.Abstractions.Clock;
 using QueueFlow.Application.Abstractions.Persistence;
@@ -81,21 +80,10 @@ public sealed class AppointmentReceiptOutboxTests
         Assert.Equal(2, handler.Bodies.Count); Assert.Equal(handler.Keys[0], handler.Keys[1]); Assert.Equal(handler.Bodies[0], handler.Bodies[1]);
         await first.ProcessBatchAsync(ct); Assert.Equal(2, handler.Bodies.Count);
 
-        // Pending public bookings only get a receipt after the existing Admin confirmation.
+        // Legacy pending records must not send a confirmed receipt before data regularization.
         var pending = new Appointment(Guid.NewGuid(), org.Id, branch.Id, service.Id, "Pendente", null, "pending@example.test", start.AddHours(1), start.AddMinutes(90), "UTC", true, now);
         setup.Add(pending); await AppointmentReceipt.EnqueueAsync(setup, pending, now, ct); await setup.SaveChangesAsync(ct);
         Assert.False(await setup.OutboxMessages.IgnoreQueryFilters().AnyAsync(x => x.Id == pending.Id, ct));
-        tenant.OrganizationId = org.Id;
-        await using (var scope = provider.CreateAsyncScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var management = new AppointmentManagementService(db, tenant, clock, new Audit());
-            var confirmed = await management.ConfirmAsync(pending.Id, ct);
-            Assert.True(confirmed.IsSuccess); Assert.Equal(AppointmentStatus.Confirmed, confirmed.Value.Status);
-            await AppointmentReceipt.EnqueueAsync(db, await db.Appointments.SingleAsync(x => x.Id == pending.Id, ct), now, ct);
-            await db.SaveChangesAsync(ct);
-        }
-        Assert.Equal(1, await setup.OutboxMessages.IgnoreQueryFilters().CountAsync(x => x.Id == pending.Id, ct));
         var adminBooking = new Appointment(Guid.NewGuid(), org.Id, branch.Id, service.Id, "Admin", null, "admin@example.test", start, start.AddMinutes(30), "UTC", false, now, Guid.NewGuid());
         await AppointmentReceipt.EnqueueAsync(setup, adminBooking, now, ct);
         Assert.DoesNotContain(setup.OutboxMessages.Local, x => x.Id == adminBooking.Id);
@@ -110,5 +98,4 @@ public sealed class AppointmentReceiptOutboxTests
         public IdentityType? IdentityType => OrganizationId.HasValue ? QueueFlow.Domain.Enums.IdentityType.Tenant : null;
         public bool IsAuthenticated => OrganizationId.HasValue;
     }
-    private sealed class Audit : IAuditWriter { public void Write(string action, string type, Guid? id, object? data = null) { } }
 }

@@ -55,7 +55,6 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
         return Result.Success(new AppointmentDetailsDto(appointment.Id, appointment.CustomerName, appointment.CustomerPhone, appointment.CustomerEmail, appointment.Status, appointment.ScheduledStart, appointment.ScheduledEnd, appointment.TimeZone, appointment.ConfirmationCode, appointment.PublicToken, appointment.Notes, appointment.BranchId, branchName, appointment.ServiceId, serviceName, appointment.QueueTicketId, appointment.CreatedAt, origin, appointment.CreatedByUserId, creatorName, notifications, history));
     }
 
-    public Task<Result<AppointmentDetailsDto>> ConfirmAsync(Guid id, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.Confirm(now), "appointment.confirmed", null, cancellationToken);
     public Task<Result<AppointmentDetailsDto>> CancelAsync(Guid id, string? reason, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.Cancel(now), "appointment.cancelled", reason, cancellationToken);
     public Task<Result<AppointmentDetailsDto>> NoShowAsync(Guid id, string? reason, CancellationToken cancellationToken) => TransitionAsync(id, (item, now) => item.MarkNoShow(now), "appointment.no-show", reason, cancellationToken);
     private async Task<Result<AppointmentDetailsDto>> TransitionAsync(Guid id, Action<Appointment, DateTimeOffset> transition, string action, string? reason, CancellationToken cancellationToken)
@@ -65,7 +64,6 @@ public sealed class AppointmentManagementService(IApplicationDbContext db, ICurr
         var previous = appointment.Status; transition(appointment, clock.UtcNow);
         db.AppointmentStatusHistory.Add(new AppointmentStatusHistory(Guid.NewGuid(), Tenant, appointment.Id, previous, appointment.Status, currentUser.UserId, reason, clock.UtcNow));
         db.OutboxMessages.Add(new OutboxMessage(Guid.NewGuid(), Tenant, "appointment.realtime", JsonSerializer.Serialize(new { eventName = action, appointmentToken = appointment.PublicToken, appointmentId = appointment.Id, appointment.ServiceId, status = appointment.Status.ToString(), appointment.ScheduledStart }), clock.UtcNow));
-        if (action == "appointment.confirmed") await AppointmentReceipt.EnqueueAsync(db, appointment, clock.UtcNow, cancellationToken);
         audit.Write(action, "Appointment", appointment.Id, new { PreviousStatus = previous.ToString(), Status = appointment.Status.ToString(), Reason = reason });
         await db.SaveChangesAsync(cancellationToken);
         return await GetAsync(id, cancellationToken);

@@ -1,5 +1,11 @@
 # Scheduling-only public link
 
+## Reservation confirmation
+
+New bookings and reschedules are immediately `Confirmed`, including services with the legacy `RequireConfirmation` value set. Admin no longer offers manual approval or its configuration; the confirmation endpoint is removed. Arrival confirmation remains an authenticated operation in the attendant flow, subject to the existing time window and queue checks.
+
+Legacy `Scheduled` reservations remain stored with their original status and appear as registered in Admin. They can check in or be marked absent without manual approval. Check-in records the transition to `CheckedIn` and still creates only one queue ticket. No bulk rewrite of existing reservations is required.
+
 ## Routes
 
 Share `/agendamento/{organizationSlug}`. The existing organization slug is reused. `/agendar/{servicePublicId}` already occupies the single-segment scheduling route, so the new namespace avoids ambiguous slug/public-ID resolution.

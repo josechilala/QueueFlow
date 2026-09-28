@@ -109,7 +109,7 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var appointment = await db.Appointments.FromSqlInterpolated($"SELECT *, xmin FROM \"Appointments\" WHERE \"Id\" = {appointmentId} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken);
-        if (appointment is null || appointment.Status != AppointmentStatus.Confirmed || appointment.QueueTicketId is not null) return null;
+        if (appointment is null || appointment.Status is not (AppointmentStatus.Scheduled or AppointmentStatus.Confirmed) || appointment.QueueTicketId is not null) return null;
         var settings = await LockSettingsAsync(appointment.OrganizationId, appointment.ServiceId, cancellationToken);
         if (settings is null || clock.UtcNow < appointment.ScheduledStart.AddMinutes(-settings.CheckInAdvanceMinutes) || clock.UtcNow > appointment.ScheduledStart.AddMinutes(settings.LateToleranceMinutes)) return null;
         var queue = await db.Queues.FromSqlInterpolated($"SELECT * FROM \"Queues\" WHERE \"OrganizationId\" = {appointment.OrganizationId} AND \"BranchId\" = {appointment.BranchId} AND \"ServiceId\" = {appointment.ServiceId} AND \"IsActive\" = TRUE AND \"Status\" = {(int)QueueStatus.Open} ORDER BY \"CreatedAt\" FOR UPDATE LIMIT 1").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken);
@@ -140,7 +140,7 @@ internal sealed class PostgresAppointmentOperations(ApplicationDbContext db, ICl
         var slot = AppointmentSlotGenerator.Generate(requestedDate, zone, schedules.Select(x => (x.StartTime, x.EndTime)).ToArray(), settings.SlotDurationMinutes, settings.CapacityPerSlot, clock.UtcNow.AddMinutes(settings.MinimumAdvanceMinutes), clock.UtcNow.AddDays(settings.MaximumAdvanceDays), blocks, reservations).SingleOrDefault(x => x.StartAt == requestedStart.ToUniversalTime());
         if (slot is null) return null;
         diagnostics.Stage = "construct_appointment";
-        var appointment = new Appointment(Guid.NewGuid(), branch.OrganizationId, branch.Id, service.Id, name, phone, email, slot.StartAt, slot.EndAt, branch.TimeZone, settings.RequireConfirmation, clock.UtcNow, rescheduledFromAppointmentId: rescheduledFromId); db.Appointments.Add(appointment); return appointment;
+        var appointment = new Appointment(Guid.NewGuid(), branch.OrganizationId, branch.Id, service.Id, name, phone, email, slot.StartAt, slot.EndAt, branch.TimeZone, clock.UtcNow, rescheduledFromAppointmentId: rescheduledFromId); db.Appointments.Add(appointment); return appointment;
     }
 
     private Task<ServiceSchedulingSettings?> LockSettingsAsync(Guid organizationId, Guid serviceId, CancellationToken cancellationToken) => db.ServiceSchedulingSettings.FromSqlInterpolated($"SELECT * FROM \"ServiceSchedulingSettings\" WHERE \"OrganizationId\" = {organizationId} AND \"ServiceId\" = {serviceId} FOR UPDATE").IgnoreQueryFilters().SingleOrDefaultAsync(cancellationToken);

@@ -35,7 +35,7 @@ public sealed class PublicAppointmentDiagnosticsTests(PlatformTestFactory factor
         var service = new Service(Guid.NewGuid(), org.Id, branch.Id, "Consultation", null, "A", 30, now);
         service.SetAttendanceMode(ServiceAttendanceMode.AppointmentOnly, now);
         var settings = new ServiceSchedulingSettings(Guid.NewGuid(), org.Id, branch.Id, service.Id, now);
-        settings.Configure(30, 1, 0, 30, 10, 60, 30, true, true, false, true, now);
+        settings.Configure(30, 1, 0, 30, 10, 60, 30, true, true, true, true, now);
         var start = new DateTimeOffset(now.UtcDateTime.Date.AddDays(2).AddHours(13), TimeSpan.Zero);
         var schedule = new ServiceSchedule(Guid.NewGuid(), org.Id, branch.Id, service.Id, start.DayOfWeek, new(10, 0), new(14, 0), now);
         db.AddRange(org, branch, service, settings, schedule);
@@ -52,6 +52,8 @@ public sealed class PublicAppointmentDiagnosticsTests(PlatformTestFactory factor
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var token = (await created.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("publicToken").GetString()!;
         Assert.Equal(1, await db.Appointments.IgnoreQueryFilters().CountAsync(Ct));
+        Assert.Equal(AppointmentStatus.Confirmed, (await db.Appointments.IgnoreQueryFilters().AsNoTracking().SingleAsync(Ct)).Status);
+        Assert.True((await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking().SingleAsync(Ct)).RequireConfirmation);
         var date = start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         using var availability = await client.GetAsync($"/api/v1/public/branches/{branch.PublicId}/services/{service.PublicId}/availability?date={date}", Ct);
         Assert.Equal(HttpStatusCode.OK, availability.StatusCode);
@@ -76,6 +78,7 @@ public sealed class PublicAppointmentDiagnosticsTests(PlatformTestFactory factor
         var replacementToken = (await rescheduled.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("publicToken").GetString()!;
         var replacement = await db.Appointments.IgnoreQueryFilters().AsNoTracking().SingleAsync(x => x.PublicToken == replacementToken, Ct);
         Assert.Equal(start.AddMinutes(30), replacement.ScheduledStart);
+        Assert.Equal(AppointmentStatus.Confirmed, replacement.Status);
         Assert.Equal(org.Id, replacement.OrganizationId);
         Assert.Equal(AppointmentStatus.Rescheduled, (await db.Appointments.IgnoreQueryFilters().AsNoTracking().SingleAsync(x => x.PublicToken == token, Ct)).Status);
         Assert.Equal(2, await db.OutboxMessages.IgnoreQueryFilters().CountAsync(x => x.Type == "appointment.receipt", Ct));

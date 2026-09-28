@@ -7,6 +7,9 @@ namespace QueueFlow.Domain.Entities;
 public sealed class Appointment : AuditableEntity, ITenantEntity
 {
     private Appointment() : base(Guid.NewGuid(), DateTimeOffset.UnixEpoch) { }
+    // New reservations are valid immediately; the overload below preserves legacy Scheduled construction.
+    public Appointment(Guid id, Guid organizationId, Guid branchId, Guid serviceId, string customerName, string? customerPhone, string? customerEmail, DateTimeOffset scheduledStart, DateTimeOffset scheduledEnd, string timeZone, DateTimeOffset now, Guid? createdByUserId = null, Guid? rescheduledFromAppointmentId = null)
+        : this(id, organizationId, branchId, serviceId, customerName, customerPhone, customerEmail, scheduledStart, scheduledEnd, timeZone, false, now, createdByUserId, rescheduledFromAppointmentId) { }
     public Appointment(Guid id, Guid organizationId, Guid branchId, Guid serviceId, string customerName, string? customerPhone, string? customerEmail, DateTimeOffset scheduledStart, DateTimeOffset scheduledEnd, string timeZone, bool requireConfirmation, DateTimeOffset now, Guid? createdByUserId = null, Guid? rescheduledFromAppointmentId = null) : base(id, now)
     {
         if (organizationId == Guid.Empty || branchId == Guid.Empty || serviceId == Guid.Empty || string.IsNullOrWhiteSpace(customerName) || customerName.Trim().Length > 200) throw new DomainException("Appointment ownership and customer name are required.");
@@ -43,10 +46,10 @@ public sealed class Appointment : AuditableEntity, ITenantEntity
     public DateTimeOffset? AnonymizedAt { get; private set; }
 
     public void Confirm(DateTimeOffset now) { Ensure(AppointmentStatus.Scheduled); Status = AppointmentStatus.Confirmed; MarkUpdated(now); }
-    public void CheckIn(Guid queueTicketId, DateTimeOffset now) { Ensure(AppointmentStatus.Confirmed); if (queueTicketId == Guid.Empty || QueueTicketId is not null) throw new DomainException("Appointment check-in ticket is invalid."); QueueTicketId = queueTicketId; CheckedInAt = now; Status = AppointmentStatus.CheckedIn; MarkUpdated(now); }
+    public void CheckIn(Guid queueTicketId, DateTimeOffset now) { EnsureOneOf(AppointmentStatus.Scheduled, AppointmentStatus.Confirmed); if (queueTicketId == Guid.Empty || QueueTicketId is not null) throw new DomainException("Appointment check-in ticket is invalid."); QueueTicketId = queueTicketId; CheckedInAt = now; Status = AppointmentStatus.CheckedIn; MarkUpdated(now); }
     public void Complete(DateTimeOffset now) { Ensure(AppointmentStatus.CheckedIn); Status = AppointmentStatus.Completed; CompletedAt = now; MarkUpdated(now); }
     public void Cancel(DateTimeOffset now) { EnsureOneOf(AppointmentStatus.Scheduled, AppointmentStatus.Confirmed); Status = AppointmentStatus.Cancelled; CancelledAt = now; MarkUpdated(now); }
-    public void MarkNoShow(DateTimeOffset now) { Ensure(AppointmentStatus.Confirmed); Status = AppointmentStatus.NoShow; NoShowAt = now; MarkUpdated(now); }
+    public void MarkNoShow(DateTimeOffset now) { EnsureOneOf(AppointmentStatus.Scheduled, AppointmentStatus.Confirmed); Status = AppointmentStatus.NoShow; NoShowAt = now; MarkUpdated(now); }
     public void MarkRescheduled(DateTimeOffset now) { EnsureOneOf(AppointmentStatus.Scheduled, AppointmentStatus.Confirmed); Status = AppointmentStatus.Rescheduled; MarkUpdated(now); }
     public void SetNotes(string? notes, DateTimeOffset now) { if (notes?.Trim().Length > 1000) throw new DomainException("Appointment notes are too long."); Notes = Clean(notes); MarkUpdated(now); }
     public void MarkReminderSent(int expectedStage, DateTimeOffset now) { if (expectedStage != ReminderStage || expectedStage is < 0 or > 2) throw new DomainException("Appointment reminder stage is invalid."); ReminderStage++; MarkUpdated(now); }

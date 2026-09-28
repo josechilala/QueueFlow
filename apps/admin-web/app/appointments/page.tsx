@@ -1,3 +1,4 @@
+import { appointmentStatusLabels } from '../../lib/appointment-status';
 import { formatAppointmentDateTime } from '../../lib/appointment-time';
 import { RealtimeRefresh } from '../../components/realtime-refresh';
 import Link from 'next/link';
@@ -10,7 +11,7 @@ import { getBranches } from '../../lib/server-branches';
 import { getServices } from '../../lib/server-services';
 import { getServerSession } from '../../lib/server-session';
 
-const labels: Record<AppointmentStatus, string> = { Scheduled: 'Pendente', Confirmed: 'Confirmado', CheckedIn: 'Chegada confirmada', Completed: 'Concluído', Cancelled: 'Cancelado', NoShow: 'Não compareceu', Rescheduled: 'Reagendado' };
+const labels = appointmentStatusLabels;
 
 export default async function AppointmentsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const session = await getServerSession();

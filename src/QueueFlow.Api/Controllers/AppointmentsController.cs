@@ -12,8 +12,6 @@ public sealed class AppointmentsController(AppointmentManagementService appointm
     public async Task<IActionResult> List([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, [FromQuery] AppointmentStatus? status, [FromQuery] Guid? branchId, [FromQuery] Guid? serviceId, CancellationToken cancellationToken) => Ok(await appointments.ListAsync(from, to, status, branchId, serviceId, cancellationToken));
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken cancellationToken) => ToAction(await appointments.GetAsync(id, cancellationToken));
-    [HttpPost("{id:guid}/confirm")]
-    public async Task<IActionResult> Confirm(Guid id, CancellationToken cancellationToken) => ToAction(await appointments.ConfirmAsync(id, cancellationToken));
     [HttpPost("{id:guid}/cancel")]
     public async Task<IActionResult> Cancel(Guid id, AppointmentReasonRequest request, CancellationToken cancellationToken) => ToAction(await appointments.CancelAsync(id, request.Reason, cancellationToken));
     [HttpPost("{id:guid}/no-show")]

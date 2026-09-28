@@ -1,3 +1,4 @@
+import { appointmentStatusLabels } from '../../../lib/appointment-status';
 import { formatAppointmentDateTime } from '../../../lib/appointment-time';
 import { RealtimeRefresh } from '../../../components/realtime-refresh';
 import Link from 'next/link';
@@ -31,7 +32,7 @@ export default async function AppointmentPage({ params }: { params: Promise<{ id
       <h3>Rastreabilidade da reserva</h3>
       <dl>
         <div><dt>Data do atendimento</dt><dd>{formatAppointmentDateTime(item.scheduledStart, item.timeZone)}</dd></div>
-        <div><dt>Status</dt><dd>{item.status}</dd></div>
+        <div><dt>Status</dt><dd>{appointmentStatusLabels[item.status]}</dd></div>
         <div><dt>Criado em</dt><dd>{new Date(item.createdAt).toLocaleString('pt-BR')}</dd></div>
         <div><dt>Origem</dt><dd>{appointmentOriginLabel[item.origin]}</dd></div>
         <div><dt>Criado por</dt><dd>{item.createdBy}</dd></div>
@@ -49,6 +50,6 @@ export default async function AppointmentPage({ params }: { params: Promise<{ id
       {publicUrl ? <AppointmentPublicLink url={publicUrl} /> : <p className="form-error">Link indisponível. Configure a URL do portal do cliente.</p>}
     </section>
     <div className="section-heading"><div><h3>Histórico de alterações</h3><p className="muted">Transições administrativas e operacionais registradas para esta reserva.</p></div></div>
-    <div className="table-wrap"><table><thead><tr><th>Quando</th><th>Anterior</th><th>Novo</th><th>Motivo</th></tr></thead><tbody>{item.history.map((history, index) => <tr key={`${history.createdAt}-${index}`}><td>{new Date(history.createdAt).toLocaleString('pt-BR')}</td><td>{history.previousStatus}</td><td>{history.newStatus}</td><td>{history.reason ?? '—'}</td></tr>)}</tbody></table></div>
+    <div className="table-wrap"><table><thead><tr><th>Quando</th><th>Anterior</th><th>Novo</th><th>Motivo</th></tr></thead><tbody>{item.history.map((history, index) => <tr key={`${history.createdAt}-${index}`}><td>{new Date(history.createdAt).toLocaleString('pt-BR')}</td><td>{history.previousStatus ? appointmentStatusLabels[history.previousStatus] : '—'}</td><td>{appointmentStatusLabels[history.newStatus]}</td><td>{history.reason ?? '—'}</td></tr>)}</tbody></table></div>
   </AdminShell>;
 }

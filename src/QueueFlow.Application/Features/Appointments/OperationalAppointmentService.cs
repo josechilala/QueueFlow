@@ -153,7 +153,7 @@ public sealed class OperationalAppointmentService(
     {
         DateTimeOffset? checkInAvailableAt = settings is null ? null : appointment.ScheduledStart.AddMinutes(-settings.CheckInAdvanceMinutes);
         DateTimeOffset? checkInClosesAt = settings is null ? null : appointment.ScheduledStart.AddMinutes(settings.LateToleranceMinutes);
-        var canConfirm = appointment.Status == AppointmentStatus.Confirmed && appointment.QueueTicketId is null &&
+        var canConfirm = (appointment.Status is AppointmentStatus.Scheduled or AppointmentStatus.Confirmed) && appointment.QueueTicketId is null &&
             checkInAvailableAt <= clock.UtcNow && clock.UtcNow <= checkInClosesAt;
         var operationalStatus = ResolveOperationalStatus(appointment.Status, ticketStatus);
         int? delayMinutes = operationalStatus == "Waiting" && clock.UtcNow > appointment.ScheduledStart
@@ -197,7 +197,7 @@ public sealed class OperationalAppointmentService(
         };
         return appointmentStatus switch
         {
-            AppointmentStatus.Scheduled => "AwaitingConfirmation",
+            AppointmentStatus.Scheduled => "AwaitingArrival",
             AppointmentStatus.Confirmed => "AwaitingArrival",
             AppointmentStatus.CheckedIn => "Waiting",
             AppointmentStatus.Completed => "Completed",

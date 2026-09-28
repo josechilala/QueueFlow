@@ -33,8 +33,10 @@ public sealed class OperationalAppointmentEndpointTests(QueueFlowApiFactory fact
         Assert.Equal(HttpStatusCode.Unauthorized, anonymousCheckIn.StatusCode);
     }
 
-    [Fact]
-    public async Task AttendantOnlySeesAssignedBranchAndConcurrentArrivalConfirmationIsIdempotent()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AttendantOnlySeesAssignedBranchAndConcurrentArrivalConfirmationIsIdempotent(bool legacyReservation)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var setup = factory.Services.CreateAsyncScope();
@@ -58,6 +60,8 @@ public sealed class OperationalAppointmentEndpointTests(QueueFlowApiFactory fact
         var counter = new QueueCounter(Guid.NewGuid(), organization.Id, assignedBranch.Id, "Guichê 01", now);
         var foreignQueue = QueueFor(organization.Id, foreignBranch.Id, foreignService.Id, "Foreign queue", now);
         var appointment = AppointmentFor(organization.Id, assignedBranch.Id, assignedService.Id, "Assigned customer", now);
+        if (legacyReservation)
+            appointment = new Appointment(Guid.NewGuid(), organization.Id, assignedBranch.Id, assignedService.Id, "Assigned customer", null, null, now, now.AddMinutes(30), "UTC", true, now);
         var foreignAppointment = AppointmentFor(organization.Id, foreignBranch.Id, foreignService.Id, "Foreign customer", now);
         var unavailableAppointment = AppointmentFor(organization.Id, assignedBranch.Id, unavailableService.Id, "No queue customer", now);
         db.AddRange(organization, assignedBranch, foreignBranch, attendant, assignment, assignedService, foreignService, unavailableService,
@@ -75,6 +79,9 @@ public sealed class OperationalAppointmentEndpointTests(QueueFlowApiFactory fact
             Assert.Equal(2, list.Length);
             Assert.All(list, item => Assert.Equal(assignedBranch.Id, item.BranchId));
             Assert.DoesNotContain(list, item => item.Id == foreignAppointment.Id);
+            var listedAppointment = Assert.Single(list, item => item.Id == appointment.Id);
+            Assert.True(listedAppointment.CanConfirmArrival);
+            Assert.Equal("AwaitingArrival", listedAppointment.OperationalStatus);
 
             using var forbidden = await firstClient.PostAsJsonAsync($"/api/v1/operations/appointments/{foreignAppointment.Id}/check-in", new { }, ct);
             Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
@@ -333,5 +340,5 @@ public sealed class OperationalAppointmentEndpointTests(QueueFlowApiFactory fact
 
     private sealed record PublicAppointmentResponse(string Status, string? QueueTicketToken, string? QueueTicketNumber);
     private sealed record PublicTicketResponse(string Status, int Position, int TicketsAhead, string? CounterName);
-    private sealed record OperationalAppointmentResponse(Guid Id, Guid BranchId);
+    private sealed record OperationalAppointmentResponse(Guid Id, Guid BranchId, bool CanConfirmArrival, string OperationalStatus);
 }
