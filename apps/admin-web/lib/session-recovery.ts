@@ -32,9 +32,19 @@ export async function recoverSession(returnTo: string, options: Options): Promis
     finally { if (inFlight === pending) inFlight = undefined; }
   };
 
-  const result = navigator.locks
-    ? await navigator.locks.request('queueflow-admin-session', { signal: options.signal }, run)
-    : await run();
+  let result: Attempt;
+  try {
+    result = navigator.locks
+      ? await navigator.locks.request('queueflow-admin-session', { signal: options.signal }, run)
+      : await run();
+  } catch (error) {
+    // Aborting while waiting for Web Locks is expected during navigation/StrictMode.
+    // Treat only that lifecycle cancellation as unavailable; unexpected lock failures
+    // still surface to the caller instead of being silently hidden.
+    if (options.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return 'unavailable';
+    throw error;
+  }
+
   if (options.signal.aborted) return 'unavailable';
   if (result && 'path' in result) {
     let path = destination;
