@@ -25,13 +25,14 @@ export async function POST(request: Request) {
   if (typeof body?.email !== 'string' || !body.email.trim() || typeof body?.password !== 'string' || !body.password) return failure(400);
   if (!apiUrl) return failure(503);
 
-  // Authentication is the only responsibility of this BFF operation. Profile and
-  // onboarding are post-login concerns and must never delay or invalidate a valid login.
+  // Keep onboarding out of the credential path, but resolve the authenticated role
+  // before committing cookies so Attendants remain isolated from the admin session.
   const deadline = AbortSignal.timeout(15_000);
   const signal = AbortSignal.any([deadline, request.signal]);
+  const options = { cache: 'no-store', redirect: 'error', signal } as const;
   try {
     const apiResponse = await fetch(`${apiUrl}/api/v1/auth/login`, {
-      method: 'POST', cache: 'no-store', redirect: 'error', signal,
+      ...options, method: 'POST',
       headers: { 'Content-Type': 'application/json', ...clientIpHeaders(request.headers) },
       body: JSON.stringify({ email: body.email, password: body.password }),
     });
@@ -40,10 +41,19 @@ export async function POST(request: Request) {
     if (!tokens || typeof tokens.accessToken !== 'string' || !tokens.accessToken.trim() ||
         typeof tokens.refreshToken !== 'string' || !tokens.refreshToken.trim()) return failure(502);
 
-    // Persist the authenticated session immediately. The dashboard/onboarding layer
-    // resolves authorization context using the cookie-backed session after navigation.
-    const response = NextResponse.json({ authenticated: true }, { headers: { 'Cache-Control': 'no-store' } });
-    setAuthCookies(response, tokens);
+    const sessionResponse = await fetch(`${apiUrl}/api/v1/auth/me`, {
+      ...options, headers: { Authorization: `Bearer ${tokens.accessToken}` },
+    });
+    if (!sessionResponse.ok) return failure(
+      sessionResponse.status === 429 || sessionResponse.status >= 500 ? sessionResponse.status : 502,
+      sessionResponse,
+      '/api/v1/auth/me',
+    );
+    const session = (await sessionResponse.json()) as AuthenticatedUser;
+    if (!session || !['Owner', 'Admin', 'Manager', 'Attendant', 'Viewer'].includes(session.role)) return failure(502);
+
+    const response = NextResponse.json({ authenticated: true, role: session.role }, { headers: { 'Cache-Control': 'no-store' } });
+    if (session.role !== 'Attendant') setAuthCookies(response, tokens);
     return response;
   } catch {
     return failure(deadline.aborted ? 504 : 502);
