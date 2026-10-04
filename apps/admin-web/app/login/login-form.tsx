@@ -34,10 +34,8 @@ export function LoginForm() {
         return;
       }
       const body = (await response.json()) as { authenticated?: boolean; role?: string };
-      if (body?.authenticated !== true) throw new Error('Invalid login response');
+      if (body?.authenticated !== true || typeof body.role !== 'string') throw new Error('Invalid login response');
 
-      // New contract: a successful response means the HttpOnly session is already
-      // established. Navigation must not be coupled to profile/onboarding bootstrap.
       if (body.role === 'Attendant') {
         const attendant = configuredUrl(process.env.NEXT_PUBLIC_QUEUEFLOW_ATTENDANT_URL, 'http://localhost:3003', true);
         if (!attendant) { setError('Endereço do painel do atendente não configurado.'); return; }
@@ -45,7 +43,14 @@ export function LoginForm() {
         navigating = true;
         return;
       }
-      router.replace(safeReturnTo(search.get('returnTo')));
+
+      // Owner readiness is resolved after the HttpOnly session exists. This keeps
+      // onboarding outside the credential request without allowing incomplete owners
+      // to bypass the setup flow.
+      const destination = body.role === 'Owner'
+        ? `/post-login?returnTo=${encodeURIComponent(safeReturnTo(search.get('returnTo')))}`
+        : safeReturnTo(search.get('returnTo'));
+      router.replace(destination);
       router.refresh();
       navigating = true;
     } catch {
