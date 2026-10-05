@@ -9,83 +9,95 @@ vi.mock('next/navigation', () => ({ useRouter: () => navigation, useSearchParams
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
-  vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   navigation.replace.mockReset(); navigation.refresh.mockReset(); navigation.search = new URLSearchParams();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   act(() => root.render(<StrictMode><LoginForm /></StrictMode>));
   container.querySelector<HTMLInputElement>('[name="email"]')!.value = 'owner@example.test';
   container.querySelector<HTMLInputElement>('[name="password"]')!.value = 'password with spaces';
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 const submit = () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 const button = () => container.querySelector('button')!;
-const advance = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); }); };
+const renderWithSearch = (query: string) => {
+  navigation.search = new URLSearchParams(query);
+  act(() => root.render(<StrictMode><LoginForm /></StrictMode>));
+};
 
-it('one click generates one request; rapid submits remain single-flight through slow startup and navigation', async () => {
+it('keeps rapid submits single-flight while one login request is pending', async () => {
   let finish!: (response: Response) => void;
   const fetchMock = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
   vi.stubGlobal('fetch', fetchMock);
-  expect(fetchMock).not.toHaveBeenCalled();
   await act(async () => { button().click(); submit(); submit(); });
-  await advance(60_000);
-  await act(async () => { submit(); button().click(); });
-  expect(fetchMock).toHaveBeenCalledTimes(1); expect(button().disabled).toBe(true);
-  await act(async () => { finish(Response.json({ authenticated: true, role: 'Owner', needsOnboarding: false })); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(button().disabled).toBe(true);
+  await act(async () => { finish(Response.json({ authenticated: true, role: 'Admin' })); });
   expect(navigation.replace).toHaveBeenCalledWith('/dashboard');
-  await act(async () => { submit(); }); expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(navigation.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => { submit(); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it.each(['12', 'date', 'missing', 'invalid'])('honors Retry-After %s, including submit events while cooling down, without automatic retries', async header => {
-  const seconds = header === 'missing' || header === 'invalid' ? 60 : 12;
-  const headers = header === 'missing' ? {} : { 'Retry-After': header === 'date' ? new Date(Date.now() + 12_000).toUTCString() : header };
-  const fetchMock = vi.fn().mockResolvedValue(new Response('<html>Rate limited</html>', { status: 429, headers }));
+it('does not create a browser cooldown after 429; a manual retry is immediate', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': '60' } }))
+    .mockResolvedValueOnce(Response.json({ authenticated: true, role: 'Admin' }));
   vi.stubGlobal('fetch', fetchMock);
   await act(async () => { submit(); });
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('Excesso de tentativas');
-  await advance((seconds - 1) * 1000);
+  expect(button().disabled).toBe(false);
   await act(async () => { submit(); });
-  expect(fetchMock).toHaveBeenCalledTimes(1); expect(button().disabled).toBe(true);
-  await advance(1000); expect(button().disabled).toBe(false); expect(fetchMock).toHaveBeenCalledTimes(1);
-  await act(async () => { submit(); }); expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(navigation.replace).toHaveBeenCalledWith('/dashboard');
 });
 
-it.each([502, 503, 504])('HTTP %i pauses without a request storm and a later manual attempt succeeds', async status => {
-  const fetchMock = vi.fn().mockResolvedValueOnce(new Response('gateway HTML', { status }))
-    .mockResolvedValueOnce(Response.json({ authenticated: true, role: 'Owner', needsOnboarding: true }));
+it.each([502, 503, 504])('allows an immediate explicit retry after HTTP %i', async status => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(null, { status }))
+    .mockResolvedValueOnce(Response.json({ authenticated: true, role: 'Admin' }));
   vi.stubGlobal('fetch', fetchMock);
   await act(async () => { submit(); });
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('temporariamente indisponível');
-  await act(async () => { submit(); submit(); }); expect(fetchMock).toHaveBeenCalledTimes(1);
-  await advance(5000); expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(button().disabled).toBe(false);
   await act(async () => { submit(); });
-  expect(fetchMock).toHaveBeenCalledTimes(2); expect(navigation.replace).toHaveBeenCalledWith('/onboarding');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(navigation.replace).toHaveBeenCalledWith('/dashboard');
 });
 
-it('respects Retry-After for temporary infrastructure errors as well', async () => {
-  const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503, headers: { 'Retry-After': '20' } }));
-  vi.stubGlobal('fetch', fetchMock); await act(async () => { submit(); });
-  await advance(5000); await act(async () => { submit(); });
-  expect(fetchMock).toHaveBeenCalledTimes(1); expect(button().disabled).toBe(true);
-  await advance(15000); expect(button().disabled).toBe(false);
+it('routes Owner through post-login bootstrap and preserves returnTo', async () => {
+  renderWithSearch('returnTo=/services?branch=one');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authenticated: true, role: 'Owner' })));
+  await act(async () => { submit(); });
+  expect(navigation.replace).toHaveBeenCalledWith('/post-login?returnTo=%2Fservices%3Fbranch%3Done');
 });
 
-it.each(['network', 'invalid JSON'])('recovers from %s and preserves returnTo', async kind => {
-  navigation.search = new URLSearchParams('returnTo=/services?branch=one');
-  const fetchMock = vi.fn();
-  if (kind === 'network') fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-  else fetchMock.mockResolvedValueOnce(new Response('<html>Loading</html>'));
-  fetchMock.mockResolvedValueOnce(Response.json({ authenticated: true, role: 'Admin', needsOnboarding: false }));
-  vi.stubGlobal('fetch', fetchMock); await act(async () => { submit(); });
-  expect(navigation.replace).not.toHaveBeenCalled();
-  await advance(5000); await act(async () => { submit(); });
+it('routes non-Owner admin roles directly to the safe returnTo', async () => {
+  renderWithSearch('returnTo=/services?branch=one');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authenticated: true, role: 'Manager' })));
+  await act(async () => { submit(); });
   expect(navigation.replace).toHaveBeenCalledWith('/services?branch=one');
 });
 
-it('shows invalid credentials separately and does not erase existing browser state', async () => {
+it.each(['network', 'invalid JSON'])('recovers from %s on a later explicit submit', async kind => {
+  const fetchMock = vi.fn();
+  if (kind === 'network') fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  else fetchMock.mockResolvedValueOnce(new Response('<html>Loading</html>'));
+  fetchMock.mockResolvedValueOnce(Response.json({ authenticated: true, role: 'Admin' }));
+  vi.stubGlobal('fetch', fetchMock);
+  await act(async () => { submit(); });
+  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(button().disabled).toBe(false);
+  await act(async () => { submit(); });
+  expect(navigation.replace).toHaveBeenCalledWith('/dashboard');
+});
+
+it('shows invalid credentials separately and preserves existing browser state', async () => {
   document.cookie = 'existing_session=preserved';
   const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
-  vi.stubGlobal('fetch', fetchMock); await act(async () => { submit(); });
+  vi.stubGlobal('fetch', fetchMock);
+  await act(async () => { submit(); });
   expect(container.querySelector('[role="alert"]')?.textContent).toBe('E-mail ou senha inválidos.');
-  expect(button().disabled).toBe(false); expect(document.cookie).toContain('existing_session=preserved');
-  await advance(120_000); expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(button().disabled).toBe(false);
+  expect(document.cookie).toContain('existing_session=preserved');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
