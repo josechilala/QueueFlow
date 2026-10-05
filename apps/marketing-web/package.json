@@ -6,6 +6,6 @@
     "build": "next build",
     "test": "vitest run"
   },
-  "dependencies": { "next": "latest", "react": "latest", "react-dom": "latest" },
+  "dependencies": { "next": "16.3.8", "react": "latest", "react-dom": "latest" },
   "devDependencies": { "@types/node": "latest", "@types/react": "latest", "@types/react-dom": "latest", "typescript": "latest", "vitest": "latest" }
 }

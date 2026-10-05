@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using QueueFlow.Application.Features.Auth;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
@@ -16,6 +18,11 @@ namespace QueueFlow.IntegrationTests.Tenancy;
 
 public sealed class TenantIsolationEndpointTests : IClassFixture<QueueFlowApiFactory>
 {
+    private static readonly JsonSerializerOptions ApiJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     private readonly QueueFlowApiFactory _factory;
     public TenantIsolationEndpointTests(QueueFlowApiFactory factory) => _factory = factory;
 
@@ -58,7 +65,7 @@ public sealed class TenantIsolationEndpointTests : IClassFixture<QueueFlowApiFac
             using var client = isolated.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenService.CreateAccessToken(userA.Id, companyA.Id, userA.Role, userA.Email));
 
-            var identity = await client.GetFromJsonAsync<AuthenticatedUser>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+            var identity = await client.GetFromJsonAsync<AuthenticatedUser>("/api/v1/auth/me", ApiJson, TestContext.Current.CancellationToken);
             Assert.NotNull(identity);
             Assert.Equal(companyA.Id, identity.OrganizationId);
             Assert.Equal(companyA.Name, identity.OrganizationName);

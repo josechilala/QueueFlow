@@ -19,6 +19,10 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 const submit = () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 const button = () => container.querySelector('button')!;
+const renderWithSearch = (query: string) => {
+  navigation.search = new URLSearchParams(query);
+  act(() => root.render(<StrictMode><LoginForm /></StrictMode>));
+};
 
 it('keeps rapid submits single-flight while one login request is pending', async () => {
   let finish!: (response: Response) => void;
@@ -61,14 +65,14 @@ it.each([502, 503, 504])('allows an immediate explicit retry after HTTP %i', asy
 });
 
 it('routes Owner through post-login bootstrap and preserves returnTo', async () => {
-  navigation.search = new URLSearchParams('returnTo=/services?branch=one');
+  renderWithSearch('returnTo=/services?branch=one');
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authenticated: true, role: 'Owner' })));
   await act(async () => { submit(); });
   expect(navigation.replace).toHaveBeenCalledWith('/post-login?returnTo=%2Fservices%3Fbranch%3Done');
 });
 
 it('routes non-Owner admin roles directly to the safe returnTo', async () => {
-  navigation.search = new URLSearchParams('returnTo=/services?branch=one');
+  renderWithSearch('returnTo=/services?branch=one');
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authenticated: true, role: 'Manager' })));
   await act(async () => { submit(); });
   expect(navigation.replace).toHaveBeenCalledWith('/services?branch=one');
