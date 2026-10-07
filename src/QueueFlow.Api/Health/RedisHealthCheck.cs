@@ -1,21 +1,23 @@
-using System.Net.Sockets;
-using System.Text;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using StackExchange.Redis;
 
 namespace QueueFlow.Api.Health;
 
-internal sealed class RedisHealthCheck(IConfiguration configuration) : IHealthCheck
+public sealed class RedisHealthCheck(IConnectionMultiplexer? redis = null) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
+        if (redis is null) return HealthCheckResult.Healthy("Redis is not configured for this environment.");
         try
         {
-            var value = configuration["Redis:ConnectionString"] ?? "localhost:6379"; var parts = value.Split(':', 2);
-            using var client = new TcpClient(); await client.ConnectAsync(parts[0], parts.Length == 2 ? int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture) : 6379, cancellationToken);
-            await using var stream = client.GetStream(); await stream.WriteAsync(Encoding.ASCII.GetBytes("*1\r\n$4\r\nPING\r\n"), cancellationToken);
-            var buffer = new byte[16]; var read = await stream.ReadAsync(buffer, cancellationToken); var response = Encoding.ASCII.GetString(buffer, 0, read);
-            return response.StartsWith("+PONG", StringComparison.Ordinal) ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("Redis returned an unexpected response.");
+            cancellationToken.ThrowIfCancellationRequested();
+            await redis.GetDatabase().PingAsync();
+            return HealthCheckResult.Healthy();
         }
-        catch (Exception exception) when (exception is SocketException or IOException or FormatException) { return HealthCheckResult.Unhealthy("Redis is unavailable.", exception); }
+        catch (RedisException)
+        {
+            // Do not surface Redis exception text: connection details can contain credentials.
+            return HealthCheckResult.Unhealthy("Redis is unavailable.");
+        }
     }
 }

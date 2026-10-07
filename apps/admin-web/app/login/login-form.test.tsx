@@ -33,7 +33,7 @@ it('keeps rapid submits single-flight while one login request is pending', async
   expect(button().disabled).toBe(true);
   await act(async () => { finish(Response.json({ authenticated: true, role: 'Admin' })); });
   expect(navigation.replace).toHaveBeenCalledWith('/dashboard');
-  expect(navigation.refresh).toHaveBeenCalledTimes(1);
+  expect(navigation.refresh).not.toHaveBeenCalled();
   await act(async () => { submit(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });

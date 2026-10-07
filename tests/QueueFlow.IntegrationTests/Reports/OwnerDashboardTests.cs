@@ -33,14 +33,27 @@ public sealed class OwnerDashboardTests
         var foreignQueue = new Queue(Guid.NewGuid(), foreign.Id, foreignBranch.Id, foreignService.Id, "Foreign queue", null, now);
         foreignQueue.Open(now);
         setup.AddRange(organization, foreign, branch, inactive, service, open, closed, foreignBranch, foreignService, foreignQueue);
-        QueueTicket Ticket(Queue queue, long sequence) => new(Guid.NewGuid(), queue.OrganizationId, queue.BranchId, queue.Id,
-            queue.ServiceId, $"T{sequence}", sequence, TicketPriority.Normal, Guid.NewGuid().ToString("N"), now.AddDays(-2));
+        QueueTicket Ticket(Queue queue, long sequence, DateTimeOffset? issuedAt = null) => new(Guid.NewGuid(), queue.OrganizationId, queue.BranchId, queue.Id,
+            queue.ServiceId, $"T{sequence}", sequence, TicketPriority.Normal, Guid.NewGuid().ToString("N"), issuedAt ?? now.AddDays(-2));
         var serving = Ticket(open, 2);
         serving.Call(Guid.NewGuid(), Guid.NewGuid(), now);
         serving.Start(now);
         var called = Ticket(open, 3);
         called.Call(Guid.NewGuid(), Guid.NewGuid(), now);
-        setup.AddRange(Ticket(open, 1), serving, called, Ticket(foreignQueue, 1));
+        var completedTenMinuteWait = Ticket(open, 4, now.AddMinutes(-20));
+        completedTenMinuteWait.Call(Guid.NewGuid(), Guid.NewGuid(), now.AddMinutes(-10));
+        completedTenMinuteWait.Start(now.AddMinutes(-9));
+        completedTenMinuteWait.Complete(now);
+        var completedThirtyMinuteWait = Ticket(open, 5, now.AddMinutes(-60));
+        completedThirtyMinuteWait.Call(Guid.NewGuid(), Guid.NewGuid(), now.AddMinutes(-30));
+        completedThirtyMinuteWait.Start(now.AddMinutes(-29));
+        completedThirtyMinuteWait.Complete(now);
+        var foreignCompletedWait = Ticket(foreignQueue, 2, now.AddMinutes(-200));
+        foreignCompletedWait.Call(Guid.NewGuid(), Guid.NewGuid(), now.AddMinutes(-100));
+        foreignCompletedWait.Start(now.AddMinutes(-99));
+        foreignCompletedWait.Complete(now);
+        setup.AddRange(Ticket(open, 1), serving, called, completedTenMinuteWait, completedThirtyMinuteWait,
+            Ticket(foreignQueue, 1), foreignCompletedWait);
         Appointment Booking(DateTimeOffset start, string zone = "America/Sao_Paulo") => new(Guid.NewGuid(), organization.Id,
             branch.Id, service.Id, "Customer", null, null, start, start.AddMinutes(30), zone, false, now);
         // More than the administrative list limit; all are today in the saved timezone.
@@ -63,6 +76,8 @@ public sealed class OwnerDashboardTests
         Assert.Equal(1, summary.ActiveQueues);
         Assert.Equal(1, summary.Waiting);
         Assert.Equal(1, summary.InService); // Called is not InService; old tickets still count.
+        Assert.Equal(2, summary.CompletedToday);
+        Assert.Equal(20, summary.AverageWaitMinutes);
         Assert.Equal(1, summary.ActiveBranches);
         Assert.Equal(503, summary.AppointmentsToday);
         Assert.Equal(503, summary.UpcomingAppointments);
@@ -82,6 +97,7 @@ public sealed class OwnerDashboardTests
         var emptySummary = await new ReportingService(emptyDb, new Clock(now), emptyIdentity).GetDashboardAsync(ct);
         Assert.Equal(0, emptySummary.ActiveQueues + emptySummary.Waiting + emptySummary.InService +
             emptySummary.ActiveBranches + emptySummary.AppointmentsToday + emptySummary.UpcomingAppointments);
+        Assert.Equal(0, emptySummary.AverageWaitMinutes);
         Assert.Empty(emptySummary.Queues);
     }
 

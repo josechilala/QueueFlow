@@ -2,6 +2,7 @@
 import { safeReturnTo } from '../../../../packages/session/recovery';
 import { configuredUrl } from '../../lib/configured-url';
 import { loginError } from '../../lib/login-feedback';
+import { correlationId } from '../../../../packages/session/correlation';
 
 import { FormEvent, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -25,7 +26,7 @@ export function LoginForm() {
     let navigating = false;
     try {
       const response = await fetch('/api/auth/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId() },
         body: JSON.stringify({ email: data.get('email'), password: data.get('password') }),
         redirect: 'error', signal: AbortSignal.timeout(20_000),
       });
@@ -51,7 +52,6 @@ export function LoginForm() {
         ? `/post-login?returnTo=${encodeURIComponent(safeReturnTo(search.get('returnTo')))}`
         : safeReturnTo(search.get('returnTo'));
       router.replace(destination);
-      router.refresh();
       navigating = true;
     } catch {
       setError(loginError(502));

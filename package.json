@@ -3,5 +3,6 @@
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": { "build": "npm run build --workspaces --if-present", "test": "npm run test --workspaces --if-present" },
-  "devDependencies": { "typescript": "latest" }
+  "devDependencies": { "typescript": "latest" },
+  "overrides": { "source-map-js": "1.2.2" }
 }

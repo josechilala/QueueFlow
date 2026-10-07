@@ -78,10 +78,20 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var services = await db.Services.IgnoreQueryFilters().AsNoTracking()
             .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && x.IsActive).OrderBy(x => x.Name).ToListAsync(ct);
         var ids = services.Select(x => x.Id).ToArray();
-        var queues = await db.Queues.IgnoreQueryFilters().AsNoTracking()
+        var queues = ids.Length == 0 ? new List<QueueFlowQueue>() : await db.Queues.IgnoreQueryFilters().AsNoTracking()
             .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && ids.Contains(x.ServiceId) && x.IsActive).ToListAsync(ct);
-        var settings = await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking()
+        var settings = ids.Length == 0 ? new List<Guid>() : await db.ServiceSchedulingSettings.IgnoreQueryFilters().AsNoTracking()
             .Where(x => x.OrganizationId == branch.OrganizationId && x.BranchId == branch.Id && ids.Contains(x.ServiceId) && x.IsActive).Select(x => x.ServiceId).ToListAsync(ct);
+        var queueIds = queues.Select(x => x.Id).ToArray();
+        var waitingByQueue = queueIds.Length == 0 ? new Dictionary<Guid, int>() : await db.QueueTickets.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.OrganizationId == branch.OrganizationId && queueIds.Contains(x.QueueId) && x.Status == TicketStatus.Waiting)
+            .GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
+        var attendantsByQueue = queueIds.Length == 0 ? new Dictionary<Guid, int>() : await db.QueueTickets.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.OrganizationId == branch.OrganizationId && queueIds.Contains(x.QueueId) && x.AttendantUserId != null &&
+                (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService))
+            .GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Select(x => x.AttendantUserId).Distinct().Count() })
+            .ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
         var catalog = new List<PublicBranchCatalogServiceDto>();
         foreach (var service in services)
         {
@@ -89,8 +99,8 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
             PublicBranchQueueDto? queueDto = null;
             if (queue is not null)
             {
-                var waiting = await db.QueueTickets.IgnoreQueryFilters().CountAsync(x => x.OrganizationId == branch.OrganizationId && x.QueueId == queue.Id && x.Status == TicketStatus.Waiting, ct);
-                var attendants = await ActiveAttendantsAsync(queue.Id, true, ct);
+                var waiting = waitingByQueue.GetValueOrDefault(queue.Id);
+                var attendants = attendantsByQueue.GetValueOrDefault(queue.Id);
                 var canJoin = service.AttendanceMode != ServiceAttendanceMode.AppointmentOnly && queue.Status == QueueStatus.Open && (queue.Capacity is null || waiting < queue.Capacity.Value);
                 queueDto = new(queue.PublicId, queue.Name, service.Name, queue.Status, waiting, WaitTimeEstimator.Calculate(waiting, service.AverageDurationMinutes, attendants), canJoin);
             }

@@ -64,6 +64,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureTenant<AppUser>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<UserBranch>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<RefreshToken>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
+        modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         ConfigureTenant<Service>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         modelBuilder.Entity<Service>().HasIndex(x => x.PublicId).IsUnique();
         ConfigureTenant<QueueCounter>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);

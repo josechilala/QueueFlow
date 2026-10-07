@@ -1,4 +1,5 @@
 import { safeReturnTo } from '../../../packages/session/recovery';
+import { correlationId } from '../../../packages/session/correlation';
 
 type Options = { signal: AbortSignal; onNavigate: (path: string) => void };
 type Attempt = { path: string } | { conflict: true } | null;
@@ -14,7 +15,7 @@ export async function recoverSession(returnTo: string, options: Options): Promis
         // Recovery is deliberately single-shot. Server-side refresh coordination is
         // authoritative; the browser must not create a second retry/cooldown policy.
         const response = await fetch(`/api/auth/refresh?returnTo=${encodeURIComponent(destination)}`, {
-          method: 'POST', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15_000),
+          method: 'POST', headers: { 'X-Correlation-ID': correlationId() }, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15_000),
         });
         const body = await response.json().catch(() => null);
         if (response.ok && typeof body?.redirectTo === 'string') {

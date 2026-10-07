@@ -22,8 +22,10 @@ it('reports a network failure as service unavailability', async () => {
 });
 
 it('accepts only a confirmed authentication success', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authenticated: true })));
+  const fetchMock = vi.fn().mockResolvedValue(Response.json({ authenticated: true }));
+  vi.stubGlobal('fetch', fetchMock);
   expect(await submitPlatformLogin('user@example.test', 'password')).toBeNull();
+  expect(fetchMock.mock.calls[0][1]).toMatchObject({ headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': expect.stringMatching(/^[A-Za-z0-9_-]{1,64}$/) } });
 });
 
 it('rejects HTML with status 200 instead of redirecting to the panel', async () => {

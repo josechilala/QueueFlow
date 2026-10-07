@@ -26,6 +26,7 @@ public sealed class PublicBranchCatalogTests(QueueFlowApiFactory factory) : ICla
         var org = new Organization(Guid.NewGuid(), "Catalog", Guid.NewGuid().ToString("N"), "UTC", now);
         var foreignOrg = new Organization(Guid.NewGuid(), "Foreign", Guid.NewGuid().ToString("N"), "UTC", now);
         var branch = new Branch(Guid.NewGuid(), org.Id, "Salon", "UTC", now);
+        var emptyBranch = new Branch(Guid.NewGuid(), org.Id, "No services", "UTC", now);
         var otherBranch = new Branch(Guid.NewGuid(), org.Id, "Other", "UTC", now);
         Service Make(string name) => new(Guid.NewGuid(), org.Id, branch.Id, name, null, "T", 10, now);
         var a = Make("A"); var b = Make("B"); var c = Make("C"); c.SetAttendanceMode(ServiceAttendanceMode.AppointmentOnly, now);
@@ -37,7 +38,19 @@ public sealed class PublicBranchCatalogTests(QueueFlowApiFactory factory) : ICla
         var qa = MakeQueue(a); var qb = MakeQueue(b); var qh = MakeQueue(hybrid);
         var settings = new ServiceSchedulingSettings(Guid.NewGuid(), org.Id, branch.Id, c.Id, now);
         var hybridSettings = new ServiceSchedulingSettings(Guid.NewGuid(), org.Id, branch.Id, hybrid.Id, now);
-        db.AddRange(org, foreignOrg, branch, otherBranch, a, b, c, hybrid, missing, inactive, other, foreign, qa, qb, qh, settings, hybridSettings);
+        db.AddRange(org, foreignOrg, branch, emptyBranch, otherBranch, a, b, c, hybrid, missing, inactive, other, foreign, qa, qb, qh, settings, hybridSettings);
+        var operationalTickets = Enumerable.Range(1, 5).Select(sequence => new QueueTicket(Guid.NewGuid(), org.Id, branch.Id,
+            qa.Id, a.Id, $"A{sequence}", sequence, TicketPriority.Normal, Guid.NewGuid().ToString("N"), now)).ToArray();
+        operationalTickets[4].Call(Guid.NewGuid(), Guid.NewGuid(), now);
+        var attendantOne = operationalTickets[4].AttendantUserId!.Value;
+        var secondActive = new QueueTicket(Guid.NewGuid(), org.Id, branch.Id, qa.Id, a.Id, "A6", 6,
+            TicketPriority.Normal, Guid.NewGuid().ToString("N"), now);
+        secondActive.Call(Guid.NewGuid(), Guid.NewGuid(), now);
+        var duplicateAttendant = new QueueTicket(Guid.NewGuid(), org.Id, branch.Id, qa.Id, a.Id, "A7", 7,
+            TicketPriority.Normal, Guid.NewGuid().ToString("N"), now);
+        duplicateAttendant.Call(Guid.NewGuid(), attendantOne, now);
+        db.AddRange(operationalTickets);
+        db.AddRange(secondActive, duplicateAttendant);
         db.Entry(inactive).Property(x => x.IsActive).CurrentValue = false;
         await db.SaveChangesAsync(ct);
         try
@@ -51,10 +64,19 @@ public sealed class PublicBranchCatalogTests(QueueFlowApiFactory factory) : ICla
             return json.RootElement.GetProperty("services").EnumerateArray().ToDictionary(x => x.GetProperty("name").GetString()!, x => x.Clone());
         }
         var catalog = await Catalog();
+        using (var emptyResponse = await client.GetAsync($"/api/v1/public/branches/{emptyBranch.PublicId}", ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, emptyResponse.StatusCode);
+            using var emptyJson = JsonDocument.Parse(await emptyResponse.Content.ReadAsStringAsync(ct));
+            Assert.Empty(emptyJson.RootElement.GetProperty("queues").EnumerateArray());
+            Assert.Empty(emptyJson.RootElement.GetProperty("appointmentServices").EnumerateArray());
+            Assert.Empty(emptyJson.RootElement.GetProperty("services").EnumerateArray());
+        }
         Assert.Equal(5, catalog.Count);
         Assert.True(catalog["A"].GetProperty("canJoinQueue").GetBoolean());
         Assert.True(catalog["B"].GetProperty("canJoinQueue").GetBoolean());
         Assert.Equal(qa.PublicId, catalog["A"].GetProperty("queue").GetProperty("publicId").GetString());
+        Assert.Equal(20, catalog["A"].GetProperty("queue").GetProperty("estimatedWaitMinutes").GetInt32());
         Assert.Equal(qb.PublicId, catalog["B"].GetProperty("queue").GetProperty("publicId").GetString());
         Assert.False(catalog["C"].GetProperty("canJoinQueue").GetBoolean());
         Assert.True(catalog["C"].GetProperty("canSchedule").GetBoolean());
