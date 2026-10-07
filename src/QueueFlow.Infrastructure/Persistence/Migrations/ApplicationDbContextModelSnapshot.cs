@@ -915,6 +915,9 @@ namespace QueueFlow.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("OrganizationId");
 
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
                     b.ToTable("RefreshTokens");
                 });
 

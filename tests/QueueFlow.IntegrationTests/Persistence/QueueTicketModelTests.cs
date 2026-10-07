@@ -23,6 +23,19 @@ public sealed class QueueTicketModelTests
                 .SequenceEqual(["CustomerPublicToken"]));
     }
 
+    [Fact]
+    public void TenantRefreshTokenHashIsUniqueInDatabaseModel()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseNpgsql("Host=localhost;Database=model_only;Username=model_only;Password=model_only")
+            .Options;
+        using var db = new ApplicationDbContext(options, new AnonymousCurrentUser());
+        var entity = db.Model.FindEntityType("QueueFlow.Domain.Entities.RefreshToken")!;
+
+        Assert.Contains(entity.GetIndexes(), index => index.IsUnique &&
+            index.Properties.Select(property => property.Name).SequenceEqual(["TokenHash"]));
+    }
+
     private sealed class AnonymousCurrentUser : ICurrentUser
     {
         public Guid? UserId => null;

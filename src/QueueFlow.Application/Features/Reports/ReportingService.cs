@@ -21,17 +21,18 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
     public async Task<AdministrativeDashboardSummary> GetDashboardAsync(CancellationToken ct)
     {
         var now = clock.UtcNow;
-        var organizationSlug = await db.Organizations.AsNoTracking()
-            .Where(x => x.Id == currentUser.OrganizationId)
-            .Select(x => x.Slug)
-            .SingleAsync(ct);
         var startOfTodayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
-        var activeQueues = await db.Queues.AsNoTracking().CountAsync(x => x.IsActive && x.Status == QueueStatus.Open, ct);
-        var waiting = await db.QueueTickets.AsNoTracking().CountAsync(x => x.Status == TicketStatus.Waiting, ct);
-        var inService = await db.QueueTickets.AsNoTracking().CountAsync(x => x.Status == TicketStatus.InService, ct);
-        var activeBranches = await db.Branches.AsNoTracking().CountAsync(x => x.IsActive, ct);
-        var upcomingAppointments = await db.Appointments.AsNoTracking().CountAsync(x =>
-            x.ScheduledStart > now && (x.Status == AppointmentStatus.Scheduled || x.Status == AppointmentStatus.Confirmed), ct);
+        var metrics = await db.Organizations.AsNoTracking().Where(x => x.Id == currentUser.OrganizationId)
+            .Select(organization => new
+            {
+                organization.Slug,
+                ActiveQueues = db.Queues.AsNoTracking().Count(x => x.IsActive && x.Status == QueueStatus.Open),
+                Waiting = db.QueueTickets.AsNoTracking().Count(x => x.Status == TicketStatus.Waiting),
+                InService = db.QueueTickets.AsNoTracking().Count(x => x.Status == TicketStatus.InService),
+                ActiveBranches = db.Branches.AsNoTracking().Count(x => x.IsActive),
+                UpcomingAppointments = db.Appointments.AsNoTracking().Count(x =>
+                    x.ScheduledStart > now && (x.Status == AppointmentStatus.Scheduled || x.Status == AppointmentStatus.Confirmed)),
+            }).SingleAsync(ct);
         // Each reservation retains the timezone used when the customer booked it.
         // Count in SQL without the administrative list's 500-row limit.
         var appointmentsToday = 0;
@@ -48,38 +49,31 @@ public sealed class ReportingService(IApplicationDbContext db, IClock clock, ICu
         }
         var completedToday = db.QueueTickets.AsNoTracking().Where(x => x.CompletedAt >= startOfTodayUtc);
         var completedCount = await completedToday.CountAsync(ct);
-        var completedWaits = await completedToday
-            .Where(x => x.CalledAt != null)
-            .Select(x => new { x.IssuedAt, x.CalledAt })
-            .ToListAsync(ct);
-        var averageWait = completedWaits.Count == 0
-            ? 0
-            : completedWaits.Average(x => (x.CalledAt!.Value - x.IssuedAt).TotalMinutes);
+        var averageWait = await completedToday.Where(x => x.CalledAt != null)
+            .AverageAsync(x => (double?)((x.CalledAt!.Value - x.IssuedAt).TotalMinutes), ct) ?? 0;
 
-        var queueRows = await db.Queues.AsNoTracking()
-            .OrderBy(x => x.Name)
-            .Select(x => new { x.Id, x.BranchId, x.ServiceId, x.Name, x.Status, x.IsActive })
+        var queueRows = await (from queue in db.Queues.AsNoTracking()
+            join branch in db.Branches.AsNoTracking() on queue.BranchId equals branch.Id
+            join service in db.Services.AsNoTracking() on queue.ServiceId equals service.Id
+            orderby queue.Name
+            select new { queue.Id, queue.BranchId, queue.ServiceId, queue.Name, queue.Status, queue.IsActive,
+                BranchName = branch.Name, ServiceName = service.Name, service.AverageDurationMinutes })
             .ToListAsync(ct);
         var queueIds = queueRows.Select(x => x.Id).ToArray();
-        var branchIds = queueRows.Select(x => x.BranchId).Distinct().ToArray();
-        var serviceIds = queueRows.Select(x => x.ServiceId).Distinct().ToArray();
-        var branchNames = await db.Branches.AsNoTracking().Where(x => branchIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
-        var services = await db.Services.AsNoTracking().Where(x => serviceIds.Contains(x.Id)).Select(x => new { x.Id, x.Name, x.AverageDurationMinutes }).ToDictionaryAsync(x => x.Id, ct);
-        var waitingByQueue = await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.Status == TicketStatus.Waiting).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
-        var attendantsByQueue = await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.AttendantUserId != null && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService)).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Select(x => x.AttendantUserId).Distinct().Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
+        var waitingByQueue = queueIds.Length == 0 ? new Dictionary<Guid, int>() : await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.Status == TicketStatus.Waiting).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
+        var attendantsByQueue = queueIds.Length == 0 ? new Dictionary<Guid, int>() : await db.QueueTickets.AsNoTracking().Where(x => queueIds.Contains(x.QueueId) && x.AttendantUserId != null && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService)).GroupBy(x => x.QueueId).Select(group => new { QueueId = group.Key, Count = group.Select(x => x.AttendantUserId).Distinct().Count() }).ToDictionaryAsync(x => x.QueueId, x => x.Count, ct);
         var queues = queueRows.Select(queue =>
         {
             var waitingForQueue = waitingByQueue.GetValueOrDefault(queue.Id);
             var activeAttendants = attendantsByQueue.GetValueOrDefault(queue.Id);
-            var service = services[queue.ServiceId];
-            var estimate = WaitTimeEstimator.Calculate(waitingForQueue, service.AverageDurationMinutes, activeAttendants);
-            return new QueueDashboardItem(queue.Id, queue.Name, branchNames[queue.BranchId], service.Name, queue.Status, waitingForQueue, activeAttendants, estimate);
+            var estimate = WaitTimeEstimator.Calculate(waitingForQueue, queue.AverageDurationMinutes, activeAttendants);
+            return new QueueDashboardItem(queue.Id, queue.Name, queue.BranchName, queue.ServiceName, queue.Status, waitingForQueue, activeAttendants, estimate);
         }).ToList();
 
         var activeQueueIds = queueRows.Where(x => x.IsActive && (x.Status == QueueStatus.Open || x.Status == QueueStatus.Paused)).Select(x => x.Id).ToHashSet();
         var queuesInProgress = queues.Where(x => activeQueueIds.Contains(x.Id)).ToList();
-        return new(organizationSlug, activeQueues, waiting, completedCount, averageWait, now, queuesInProgress,
-            inService, appointmentsToday, upcomingAppointments, activeBranches, queues);
+        return new(metrics.Slug, metrics.ActiveQueues, metrics.Waiting, completedCount, averageWait, now, queuesInProgress,
+            metrics.InService, appointmentsToday, metrics.UpcomingAppointments, metrics.ActiveBranches, queues);
     }
 
     public async Task<OperationalReport> GetAsync(DateTimeOffset from, CancellationToken ct)

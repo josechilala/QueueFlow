@@ -1,3 +1,5 @@
+import { correlationId } from '../../../packages/session/correlation';
+
 export function platformLoginError(status: number): string {
   if (status === 401) return 'E-mail ou senha inválidos.';
   if (status === 429) return 'Excesso de tentativas. Aguarde um pouco antes de tentar novamente.';
@@ -9,7 +11,7 @@ export function platformLoginError(status: number): string {
 export async function submitPlatformLogin(email: FormDataEntryValue | null, password: FormDataEntryValue | null): Promise<string | null> {
   try {
     const response = await fetch('/api/platform/auth/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId() },
       body: JSON.stringify({ email, password }),
     });
     if (!response.ok) return platformLoginError(response.status);

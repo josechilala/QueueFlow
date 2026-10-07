@@ -19,11 +19,13 @@ it('uses the configured API origin and preserves credentials and platform cookie
   const response = await POST(request());
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ authenticated: true });
+  expect(response.headers.get('X-Correlation-ID')).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
   expect(response.cookies.get('queueflow_platform_access')?.value).toBe('access');
   expect(response.cookies.get('queueflow_platform_refresh')?.value).toBe('refresh');
   expect(response.cookies.get('queueflow_access')).toBeUndefined();
   expect(fetchMock).toHaveBeenCalledExactlyOnceWith('https://queueflow-api-2ujz.onrender.com/api/v1/platform/auth/login', expect.objectContaining({
     body: JSON.stringify(credentials), cache: 'no-store', redirect: 'error', signal: expect.any(AbortSignal),
+    headers: expect.objectContaining({ 'Content-Type': 'application/json', 'X-Correlation-ID': response.headers.get('X-Correlation-ID') }),
   }));
 });
 
