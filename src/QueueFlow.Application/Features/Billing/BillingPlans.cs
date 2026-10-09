@@ -20,7 +20,7 @@ public sealed record BillingPlan(string Code, string Name, decimal MonthlyPrice,
 public static class BillingPlans
 {
     public const decimal AnnualDiscount = 0.05m;
-    public static readonly BillingPlan Professional = new("professional", "Profissional", 69.90m, 3);
+    public static readonly BillingPlan Professional = new("professional", "Profissional", 69.90m, 4);
     // Enterprise capacity can be expanded; specific seat pricing remains to be defined.
     public static readonly BillingPlan Enterprise = new("enterprise", "Empresarial", 179.90m, null);
 
