@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,7 +22,7 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         if (http.BaseAddress is null ||
             !string.Equals(http.BaseAddress.AbsoluteUri, SandboxBaseUrl, StringComparison.Ordinal))
             throw new InvalidOperationException("Asaas requests must use the fixed sandbox endpoint.");
-        if (Uri.TryCreate(path, UriKind.Absolute, out _) || path.StartsWith("/", StringComparison.Ordinal))
+        if (Uri.TryCreate(path, UriKind.Absolute, out _) || path.StartsWith('/'))
             throw new ArgumentException("Asaas request path must be relative.", nameof(path));
         using var request = new HttpRequestMessage(method, path);
         request.Headers.TryAddWithoutValidation("access_token", key);
@@ -48,7 +49,7 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         if (billingType is not ("PIX" or "CREDIT_CARD"))
             throw new ArgumentOutOfRangeException(nameof(billingType));
         return SendAsync<AsaasSubscriptionResponse>(HttpMethod.Post, "subscriptions",
-            new { customer = customerId, value = amount, nextDueDate = nextDueDate.ToString("yyyy-MM-dd"),
+            new { customer = customerId, value = amount, nextDueDate = nextDueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 cycle, billingType, externalReference }, ct);
     }
 
@@ -64,7 +65,7 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         if (string.IsNullOrWhiteSpace(externalReference))
             throw new ArgumentException("An external reference is required.", nameof(externalReference));
         return SendAsync<AsaasPaymentResponse>(HttpMethod.Post, "payments",
-            new { customer = customerId, value = amount, dueDate = dueDate.ToString("yyyy-MM-dd"),
+            new { customer = customerId, value = amount, dueDate = dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 billingType, externalReference }, ct);
     }
 
