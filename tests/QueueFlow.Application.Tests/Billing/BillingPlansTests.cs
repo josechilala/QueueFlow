@@ -7,6 +7,7 @@ public sealed class BillingPlansTests
     [Fact]
     public void CalculatesApprovedPrices()
     {
+        Assert.Equal(4, BillingPlans.Professional.IncludedAttendants);
         Assert.Equal(69.90m, BillingPlans.Professional.PriceFor(BillingCycle.Monthly));
         Assert.Equal(796.86m, BillingPlans.Professional.PriceFor(BillingCycle.Yearly));
         Assert.Equal(179.90m, BillingPlans.Enterprise.PriceFor(BillingCycle.Monthly));
