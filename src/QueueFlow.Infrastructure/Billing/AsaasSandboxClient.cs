@@ -47,10 +47,43 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
                 cycle, billingType, externalReference }, ct);
     }
 
+
+    // Annual Pix and one-off charges must be paid upfront. No installment or card data is accepted.
+    public Task<AsaasPaymentResponse> CreatePaymentAsync(string customerId, decimal amount,
+        DateOnly dueDate, string billingType, string externalReference, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(customerId) || amount <= 0)
+            throw new ArgumentException("Valid customer and amount are required.");
+        if (billingType is not ("PIX" or "CREDIT_CARD"))
+            throw new ArgumentOutOfRangeException(nameof(billingType));
+        if (string.IsNullOrWhiteSpace(externalReference))
+            throw new ArgumentException("An external reference is required.", nameof(externalReference));
+        return SendAsync<AsaasPaymentResponse>(HttpMethod.Post, "payments",
+            new { customer = customerId, value = amount, dueDate = dueDate.ToString("yyyy-MM-dd"),
+                billingType, externalReference }, ct);
+    }
+
+    public Task<AsaasPaymentResponse> GetPaymentAsync(string paymentId, CancellationToken ct)
+    {
+        ValidateProviderId(paymentId);
+        return SendAsync<AsaasPaymentResponse>(HttpMethod.Get, $"payments/{paymentId}", null, ct);
+    }
+
+    public Task<AsaasSubscriptionResponse> GetSubscriptionAsync(string subscriptionId, CancellationToken ct)
+    {
+        ValidateProviderId(subscriptionId);
+        return SendAsync<AsaasSubscriptionResponse>(HttpMethod.Get, $"subscriptions/{subscriptionId}", null, ct);
+    }
+
+    private static void ValidateProviderId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 100 || !id.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
+            throw new ArgumentException("Invalid provider ID.", nameof(id));
+    }
+
     public Task<AsaasPixQrCodeResponse> GetPixQrCodeAsync(string paymentId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(paymentId) || !paymentId.All(char.IsLetterOrDigit))
-            throw new ArgumentException("Invalid payment ID.", nameof(paymentId));
+        ValidateProviderId(paymentId);
         return SendAsync<AsaasPixQrCodeResponse>(HttpMethod.Get, $"payments/{paymentId}/pixQrCode", null, ct);
     }
 }
@@ -62,3 +95,10 @@ public sealed record AsaasPixQrCodeResponse(
     [property: JsonPropertyName("encodedImage")] string? EncodedImage,
     [property: JsonPropertyName("payload")] string? Payload,
     [property: JsonPropertyName("expirationDate")] string? ExpirationDate);
+
+public sealed record AsaasPaymentResponse(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("status")] string? Status,
+    [property: JsonPropertyName("invoiceUrl")] string? InvoiceUrl,
+    [property: JsonPropertyName("billingType")] string? BillingType,
+    [property: JsonPropertyName("value")] decimal Value);
