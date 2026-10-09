@@ -1,28 +1,35 @@
 # QueueFlow — Asaas Sandbox billing (work in progress)
 
-## Scope
-- Only sandbox: `https://api-sandbox.asaas.com/v3/`.
-- Monthly (`MONTHLY`) and yearly (`YEARLY`) subscriptions.
-- Asaas recurring billing types: `CREDIT_CARD` and `PIX`. Debit is **not** a supported recurring subscription billing type; do not label it as automatic debit.
-- Pix subscriptions generate charges; customers must pay each charge. Obtain dynamic QR codes via `GET /payments/{id}/pixQrCode`.
-- Commercial plan codes, entitlements and prices require product approval; no prices should be invented.
-- Keep the existing 14-day trial behavior unchanged.
+## Approved commercial catalog (BRL)
+| Plan | Monthly | Annual, 5% discount | Attendants |
+|---|---:|---:|---|
+| Profissional | R$ 69,90 | R$ 796,86 upfront | 3 |
+| Empresarial | R$ 179,90 | R$ 2.050,86 upfront | Expandable; seat add-on pricing pending |
 
-## Status of this branch
-This first commit provides billing period/method validation and an isolated sandbox HTTP transport. It is **not** an operational checkout and is intentionally not wired into the running API. No live payment can be made through this transport.
+Annual prices equal 12 monthly payments less 5%, rounded to cents. Annual Pix and debit must be paid **in full** before service activation; never create twelve installment invoices for these methods. Credit card may use the annual Asaas subscription cycle, charging the full annual amount each year. Annual credit-card installment support is not included.
 
-## Remaining before any checkout is enabled
-1. Agree on plan names, features, monthly and annual prices, trial-to-paid transition and grace period.
-2. Add persistence/migration for customer, subscription, charges, provider event IDs and unique idempotency keys, with tenant isolation.
-3. Implement tenant-authorized checkout with duplicate-subscription prevention and payment-method UX. Prefer Asaas-hosted card checkout/tokenization; never log or persist PAN/CVV.
-4. Add authenticated webhook ingress with Asaas access-token validation, deduplication, out-of-order handling, reconciliation and durable retries. Never activate solely from the synchronous creation response.
-5. Implement cancellation, renewals, failed payments, Pix QR display/copy-paste and lifecycle management.
-6. Add unit/integration tests, verify migrations and execute sandbox scenarios before merge or deployment.
+## Payment collection
+- Monthly credit: Asaas subscription (`MONTHLY`, `CREDIT_CARD`).
+- Monthly Pix: Asaas subscription (`MONTHLY`, `PIX`); each generated invoice must be paid by the customer.
+- Annual credit: Asaas subscription (`YEARLY`, `CREDIT_CARD`), full annual charge per renewal.
+- Annual Pix: **one-time annual invoice** (`PIX`), full amount; renewal needs a new annual invoice.
+- Debit: **one-time payment** only, full monthly or annual amount; debit acceptance depends on the Asaas hosted invoice/checkout product and must be confirmed in sandbox before offering the option in UI. Never send `DEBIT_CARD` as a subscription billing type.
 
-## Secrets
-Configure `Asaas__SandboxApiKey` via environment secret management only. Never commit credentials. Sandbox account and production account use separate credentials. Webhook secrets must be managed independently.
+## Implementation status
+The branch currently has a domain-side price and collection-mode catalog plus an isolated Asaas sandbox transport. Neither is wired to live routes. No operational checkout, debit payment, webhook, migration, tenant state transition, or tests have been completed.
 
-## API documentation
+## Requirements before enabling
+1. Add tenant-scoped billing persistence, unique payment/provider IDs and migration.
+2. Add authorized checkout, customer mapping, one-time payment API and hosted debit flow; never store PAN/CVV.
+3. Validate webhook token, deduplicate events, reconcile with provider, handle retries and out-of-order delivery; only confirmed payment may activate service.
+4. Add Pix QR display/copy-paste, cancellation, delinquency and renewal rules.
+5. Test all sandbox payment paths, annual upfront rules and cross-tenant isolation; run build and tests.
+6. Keep existing 14-day trial unchanged until explicit transition rules are approved.
+
+## Secrets and environment
+Use `Asaas__SandboxApiKey` from secret management, never the repository. Sandbox endpoint: `https://api-sandbox.asaas.com/v3/`. Production credentials and endpoints must remain disabled in this feature branch.
+
+## Documentation
 - https://docs.asaas.com/docs/sandbox
 - https://docs.asaas.com/reference/create-new-subscription
 - https://docs.asaas.com/reference/obter-qr-code-para-pagamentos-via-pix
