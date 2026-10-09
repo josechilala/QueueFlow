@@ -8,9 +8,9 @@ counter was reset by success, and each API process maintained independent state.
 
 - Login: `RateLimiting:AuthPermitLimit` (unchanged default 10) counts only
   `auth.invalid_credentials` / `platform.invalid_credentials`. The window expires
-  one minute after its first failure. A successful login deletes the failure state.
-  Ten failures block subsequent attempts until expiry, including correct credentials;
-  this intentional temporary protection prevents brute force. Other service errors,
+  one minute after its first failure. A successful login deletes the failure state,
+  including when a correct password is presented during a lockout. Ten invalid
+  credentials still receive 429 until expiry. Other service errors,
   malformed bodies and canceled authentication do not increment this counter.
 - Partition: identity realm (tenant/platform) plus SHA-256 of trimmed, lowercase
   email, independent of source IP. Unknown emails use the same state and responses.
@@ -20,8 +20,10 @@ counter was reset by success, and each API process maintained independent state.
   longer than five seconds returns retryable 503, not a credential failure.
 - Refresh: `RateLimiting:RefreshPermitLimit` (unchanged default 30/minute), independent
   from login. The signed token identity selects a stable bucket across rotations;
-  unverifiable tokens share a source-IP bucket so changing random tokens cannot
-  bypass throttling. Successful login does not reset refresh usage.
+  unverifiable tokens use the source IP after trusted forwarded headers are applied.
+  The Admin BFF forwards only the client IP stamped and signed by its trusted-proxy
+  entry server, allowing older opaque refresh tokens to avoid sharing the BFF's
+  egress-IP bucket. Successful login does not reset refresh usage.
 - Login/refresh do not also acquire the global anonymous-IP budget. Other endpoints
   retain their existing limits. Malformed login input has a separate `login-input`
   IP budget; registration retains `auth`. Rate-limit responses include Retry-After.

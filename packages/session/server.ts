@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cookies } from 'next/headers';
+import { cookies, headers as requestHeaders } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { retryDelay, safeReturnTo } from './recovery';
 import { correlationId } from './correlation';
@@ -13,6 +13,7 @@ type Configuration = {
   recoveryCookie?: string;
   refreshPath: string;
   rejectionCode: string;
+  forwardClientIp?: (headers: Headers) => Record<string, string>;
   home: string;
   login: string;
   publicUrl: (request: Request, path: string) => URL;
@@ -46,7 +47,7 @@ function temporary(status = 503, retryAfter?: string, code?: string, requestCorr
 }
 
 export function createSession(config: Configuration) {
-  async function renew(refreshToken: string, requestCorrelationId: string): Promise<Renewal> {
+  async function renew(refreshToken: string, requestCorrelationId: string, incomingHeaders?: Headers): Promise<Renewal> {
     const proof = config.recoveryCookie ? (await cookies()).get(config.recoveryCookie)?.value : undefined;
     const key = createHash('sha256').update(JSON.stringify([config.apiUrl(), config.refreshPath, refreshToken, proof])).digest('hex');
     const existing = renewals.get(key);
@@ -62,7 +63,8 @@ export function createSession(config: Configuration) {
     const pending = (async (): Promise<Renewal> => {
       const startedAt = Date.now();
       const response = await sessionFetch(`${config.apiUrl()}${config.refreshPath}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': requestCorrelationId }, body: JSON.stringify({ refreshToken }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': requestCorrelationId,
+          ...(incomingHeaders ? config.forwardClientIp?.(incomingHeaders) : {}) }, body: JSON.stringify({ refreshToken }),
       });
       const body = await response.json().catch(() => null);
       const replayCode = config.rejectionCode.replace('invalid_refresh', 'refresh_conflict');
@@ -110,7 +112,7 @@ export function createSession(config: Configuration) {
     };
     const token = (await cookies()).get(config.refreshCookie)?.value;
     if (!token) return navigate(`${config.login}?returnTo=${encodeURIComponent(destination)}`);
-    const result = await renew(token, requestId);
+    const result = await renew(token, requestId, request.headers);
     console.info(JSON.stringify({ event: 'auth_operation', operation: 'session_recovery',
       outcome: result.kind === 'success' ? 'success' : result.kind === 'rejected' ? 'refresh_rejected' : 'temporarily_unavailable',
       status: result.kind === 'success' ? 200 : result.kind === 'rejected' ? 401 : result.status,
@@ -131,6 +133,7 @@ export function createSession(config: Configuration) {
   // Only route handlers use this: server components cannot persist rotated cookies.
   async function forward(path: string, init: RequestInit = {}): Promise<NextResponse> {
     const jar = await cookies();
+    const incomingHeaders = await requestHeaders();
     const access = jar.get(config.accessCookie)?.value;
     const refreshToken = jar.get(config.refreshCookie)?.value;
     const requestId = correlationId(new Headers(init.headers).get('X-Correlation-ID'));
@@ -143,7 +146,7 @@ export function createSession(config: Configuration) {
     let upstream = access ? await send(access) : new Response(null, { status: 401 });
     let rotated: TokenPair | undefined;
     if (upstream.status === 401 && refreshToken) {
-      const result = await renew(refreshToken, requestId);
+      const result = await renew(refreshToken, requestId, incomingHeaders);
       if (result.kind === 'temporary') return temporary(result.status, result.retryAt ? String(Math.max(0, Math.ceil((result.retryAt - Date.now()) / 1000))) : result.retryAfter, result.code, requestId);
       if (result.kind === 'rejected') {
         const response = NextResponse.json({ message: 'Sessão expirada.' }, { status: 401, headers: { 'Cache-Control': 'no-store', 'X-Correlation-ID': requestId } });

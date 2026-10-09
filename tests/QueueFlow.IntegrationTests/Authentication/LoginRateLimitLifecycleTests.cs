@@ -100,7 +100,7 @@ public sealed class LoginRateLimitLifecycleTests(PlatformTestFactory factory) : 
             }
             foreach (var identity in new[] { email, unknown })
             {
-                using var blocked = await client2.PostAsJsonAsync(path + "/login", new { email = identity, password }, Ct);
+                using var blocked = await client2.PostAsJsonAsync(path + "/login", new { email = identity, password = "wrong-password" }, Ct);
                 Assert.Equal(HttpStatusCode.TooManyRequests, blocked.StatusCode);
                 Assert.Equal("login", blocked.Headers.GetValues("X-RateLimit-Policy").Single());
                 Assert.InRange(blocked.Headers.RetryAfter!.Delta!.Value.TotalSeconds, 1, 60);

@@ -1,8 +1,8 @@
 namespace QueueFlow.Application.Abstractions.Authentication;
 
 public enum LoginAdmission { Allowed, Busy, Blocked }
-public enum LoginAttemptOutcome { Ignored, Failed, Succeeded }
-public sealed record LoginAdmissionResult(LoginAdmission Admission, TimeSpan RetryAfter);
+public enum LoginAttemptOutcome { Ignored, Failed, Succeeded, LockedOut }
+public sealed record LoginAdmissionResult(LoginAdmission Admission, TimeSpan RetryAfter, bool LockoutActive = false);
 
 public interface IAuthenticationThrottleStore
 {

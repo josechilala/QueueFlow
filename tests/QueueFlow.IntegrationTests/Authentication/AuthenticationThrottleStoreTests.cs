@@ -20,8 +20,9 @@ public sealed class AuthenticationThrottleStoreTests
     public async Task OnlyCredentialFailuresCountAndSuccessResetsAcrossInstances(bool distributed)
     {
         using var state = await Stores.CreateAsync(distributed);
-        var first = new LoginProtection(state.First, new());
-        var second = new LoginProtection(state.Second, new());
+        var options = new LoginProtectionOptions { BlockedAttemptCooldown = TimeSpan.FromMilliseconds(10), QueueWait = TimeSpan.FromSeconds(1) };
+        var first = new LoginProtection(state.First, options);
+        var second = new LoginProtection(state.Second, options);
         var email = $"{Guid.NewGuid():N}@example.test";
         for (var i = 0; i < 20; i++)
             Assert.True((await first.ExecuteAsync(IdentityType.Tenant, email, Valid, Ct)).Result.IsSuccess);
@@ -39,10 +40,66 @@ public sealed class AuthenticationThrottleStoreTests
         Assert.Equal(10, results.Count(x => x.Result.Error.Code == "auth.invalid_credentials"));
         Assert.Equal(10, results.Count(x => x.Result.Error.Code == "auth.login_limited"));
         var blocked = await second.ExecuteAsync(IdentityType.Tenant, email, Valid, Ct);
-        Assert.Equal("auth.login_limited", blocked.Result.Error.Code);
-        Assert.InRange(blocked.RetryAfter!.Value.TotalSeconds, 1, 60);
+        Assert.True(blocked.Result.IsSuccess);
+        Assert.Null(blocked.RetryAfter);
+        for (var i = 0; i < 10; i++)
+            Assert.Equal("auth.invalid_credentials", (await first.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
+        Assert.Equal("auth.login_limited", (await second.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
         Assert.True((await second.ExecuteAsync(IdentityType.Platform, email, Valid, Ct)).Result.IsSuccess);
         Assert.True((await second.ExecuteAsync(IdentityType.Tenant, "other-" + email, Valid, Ct)).Result.IsSuccess);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CorrectCredentialsRecoverEvenAfterFailureLimit(bool distributed)
+    {
+        using var state = await Stores.CreateAsync(distributed);
+        var options = new LoginProtectionOptions { BlockedAttemptCooldown = TimeSpan.FromMilliseconds(25), QueueWait = TimeSpan.FromSeconds(1) };
+        var first = new LoginProtection(state.First, options);
+        var second = new LoginProtection(state.Second, options);
+        var email = $"locked-{Guid.NewGuid():N}@example.test";
+
+        for (var i = 0; i < 10; i++)
+            Assert.Equal("auth.invalid_credentials", (await first.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
+        Assert.Equal("auth.login_limited", (await first.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
+
+        var successfulVerifications = 0;
+        var valid = await second.ExecuteAsync(IdentityType.Tenant, email, token =>
+        {
+            Interlocked.Increment(ref successfulVerifications);
+            return Valid(token);
+        }, Ct);
+        Assert.True(valid.Result.IsSuccess);
+        Assert.Equal(1, successfulVerifications);
+
+        for (var i = 0; i < 10; i++)
+            Assert.Equal("auth.invalid_credentials", (await first.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
+        Assert.Equal("auth.login_limited", (await second.ExecuteAsync(IdentityType.Tenant, email, Invalid, Ct)).Result.Error.Code);
+    }
+
+    [Fact]
+    public async Task LockedOutInvalidCredentialsAreRateLimitedByCooldown()
+    {
+        var cooldown = TimeSpan.FromMilliseconds(200);
+        var protection = new LoginProtection(new InMemoryAuthenticationThrottleStore(TimeProvider.System),
+            new LoginProtectionOptions { FailureLimit = 1, FailureWindow = Window, BlockedAttemptCooldown = cooldown, QueueWait = TimeSpan.FromSeconds(1) });
+        var authenticationChecks = 0;
+        Task<Result<TokenPair>> InvalidAndCount(CancellationToken _)
+        {
+            Interlocked.Increment(ref authenticationChecks);
+            return Invalid(Ct);
+        }
+        var email = $"cooldown-{Guid.NewGuid():N}@example.test";
+
+        Assert.Equal("auth.invalid_credentials", (await protection.ExecuteAsync(IdentityType.Tenant, email, InvalidAndCount, Ct)).Result.Error.Code);
+        Assert.Equal("auth.login_limited", (await protection.ExecuteAsync(IdentityType.Tenant, email, InvalidAndCount, Ct)).Result.Error.Code);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal("auth.login_limited", (await protection.ExecuteAsync(IdentityType.Tenant, email, InvalidAndCount, Ct)).Result.Error.Code);
+
+        Assert.True(timer.Elapsed >= TimeSpan.FromMilliseconds(150));
+        Assert.Equal(3, authenticationChecks);
+        Assert.Equal(TimeSpan.FromSeconds(5), new LoginProtectionOptions().BlockedAttemptCooldown);
     }
 
     [Theory]
@@ -75,6 +132,7 @@ public sealed class AuthenticationThrottleStoreTests
         Assert.False(await state.First.FinishLoginAsync(key, "old", LoginAttemptOutcome.Succeeded, Window, Ct));
         Assert.True(await state.Second.FinishLoginAsync(key, "new", LoginAttemptOutcome.Failed, shortWindow, Ct));
         Assert.Equal(LoginAdmission.Blocked, (await state.First.BeginLoginAsync(key, "blocked", 1, Window, Window, Ct)).Admission);
+        Assert.True(await state.First.FinishLoginAsync(key, "blocked", LoginAttemptOutcome.Ignored, Window, Ct));
         await Task.Delay(200, Ct);
         Assert.Equal(LoginAdmission.Allowed, (await state.First.BeginLoginAsync(key, "recovered", 1, Window, Window, Ct)).Admission);
         await state.First.FinishLoginAsync(key, "recovered", LoginAttemptOutcome.Succeeded, Window, Ct);

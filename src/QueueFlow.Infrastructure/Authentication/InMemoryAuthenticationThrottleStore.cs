@@ -33,9 +33,13 @@ internal sealed class InMemoryAuthenticationThrottleStore(TimeProvider time) : I
         {
             var now = time.GetUtcNow();
             var entry = Get("login:" + key, now);
+            if (entry.LeaseUntil > now) return Task.FromResult(new LoginAdmissionResult(LoginAdmission.Busy, entry.LeaseUntil - now, entry.Failures >= failureLimit));
             if (entry.Until <= now) entry.Failures = 0;
-            if (entry.Failures >= failureLimit) return Task.FromResult(new LoginAdmissionResult(LoginAdmission.Blocked, entry.Until - now));
-            if (entry.Owner is not null && entry.LeaseUntil > now) return Task.FromResult(new LoginAdmissionResult(LoginAdmission.Busy, entry.LeaseUntil - now));
+            if (entry.Failures >= failureLimit)
+            {
+                entry.Owner = owner; entry.LeaseUntil = now + lease;
+                return Task.FromResult(new LoginAdmissionResult(LoginAdmission.Blocked, entry.Until - now, true));
+            }
             entry.Owner = owner; entry.LeaseUntil = now + lease;
             return Task.FromResult(new LoginAdmissionResult(LoginAdmission.Allowed, TimeSpan.Zero));
         }
@@ -51,7 +55,8 @@ internal sealed class InMemoryAuthenticationThrottleStore(TimeProvider time) : I
             if (entry.Until <= now) entry.Failures = 0;
             if (outcome == LoginAttemptOutcome.Succeeded) entry.Failures = 0;
             if (outcome == LoginAttemptOutcome.Failed && entry.Failures++ == 0) entry.Until = now + window;
-            entry.Owner = null; entry.LeaseUntil = default;
+            entry.Owner = null;
+            entry.LeaseUntil = outcome == LoginAttemptOutcome.LockedOut && entry.Failures > 0 && entry.Until > now ? now + window : default;
             if (entry.Failures == 0) entries.Remove(key);
             return Task.FromResult(true);
         }

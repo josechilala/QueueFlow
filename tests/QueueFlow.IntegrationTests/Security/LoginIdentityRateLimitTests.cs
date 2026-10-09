@@ -163,6 +163,25 @@ public sealed class LoginIdentityRateLimitTests
     }
 
     [Fact]
+    public async Task OpaqueRefreshBudgetsUseValidatedForwardedClientIpInsteadOfSharedBffPeer()
+    {
+        await using var root = new QueueFlowApiFactory();
+        await using var factory = CreateFactory(root).WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("RateLimiting:RefreshPermitLimit", "2");
+            builder.UseSetting("ReverseProxy:KnownProxies:0", "198.51.100.1");
+            builder.UseSetting("ReverseProxy:ForwardLimit", "1");
+        });
+        var legacyOpaqueToken = factory.Services.GetRequiredService<ITokenService>().CreateRefreshToken();
+        var body = JsonSerializer.Serialize(new { refreshToken = legacyOpaqueToken });
+
+        Assert.Equal(204, await Send(factory, "/api/v1/auth/refresh", body, forwarded: "203.0.113.10"));
+        Assert.Equal(204, await Send(factory, "/api/v1/auth/refresh", body, forwarded: "203.0.113.10"));
+        Assert.Equal(429, await Send(factory, "/api/v1/auth/refresh", body, forwarded: "203.0.113.10", expectedPolicy: "refresh"));
+        Assert.Equal(204, await Send(factory, "/api/v1/auth/refresh", body, forwarded: "203.0.113.11"));
+    }
+
+    [Fact]
     public async Task EndpointRefreshBudgetSurvivesTokenRotation()
     {
         await using var root = new QueueFlowApiFactory();

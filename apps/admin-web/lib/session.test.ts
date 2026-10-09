@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { tenantSession, platformSession } from './session';
 import { attendantSession } from '../../attendant-web/lib/session';
@@ -7,7 +8,7 @@ import { forwardAuthenticatedDelete, forwardAuthenticatedJson } from './server-a
 import { forwardPlatformJson } from './server-platform-proxy';
 import { post as attendantPost } from '../../attendant-web/lib/api-proxy';
 
-vi.mock('next/headers', () => ({ cookies: vi.fn() }));
+vi.mock('next/headers', () => ({ cookies: vi.fn(), headers: vi.fn(async () => new Headers()) }));
 let sequence = 0;
 let jar: Map<string, string>;
 const pair = { accessToken: 'new-access', refreshToken: 'new-refresh' };
@@ -245,4 +246,34 @@ it('recovers a lost response with browser proof but not with the old token alone
   expect(replay.status).toBe(503);
   expect(replay.headers.has('set-cookie')).toBe(false);
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('forwards only the BFF-validated client IP on refresh requests', async () => {
+  const key = 'local-test-signing-key';
+  vi.stubEnv('QUEUEFLOW_INTERNAL_IP_KEY', key);
+  jar.set('queueflow_refresh', `opaque-${++sequence}`);
+  const ip = '198.51.100.24';
+  const signature = createHmac('sha256', key).update(ip).digest('hex');
+  const fetch = mockFetch(Response.json(pair));
+  const incoming = request('/api/auth/refresh');
+  incoming.headers.set('x-queueflow-client-ip', ip);
+  incoming.headers.set('x-queueflow-client-ip-signature', signature);
+
+  await tenantSession.refresh(incoming);
+
+  expect(new Headers(fetch.mock.calls[0][1].headers).get('X-Forwarded-For')).toBe(ip);
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ refreshToken: jar.get('queueflow_refresh') });
+});
+
+it('does not forward an unvalidated client IP on refresh requests', async () => {
+  vi.stubEnv('QUEUEFLOW_INTERNAL_IP_KEY', 'local-test-signing-key');
+  jar.set('queueflow_refresh', `opaque-${++sequence}`);
+  const fetch = mockFetch(Response.json(pair));
+  const incoming = request('/api/auth/refresh');
+  incoming.headers.set('x-queueflow-client-ip', '198.51.100.24');
+  incoming.headers.set('x-queueflow-client-ip-signature', 'forged');
+
+  await tenantSession.refresh(incoming);
+
+  expect(new Headers(fetch.mock.calls[0][1].headers).get('X-Forwarded-For')).toBeNull();
 });

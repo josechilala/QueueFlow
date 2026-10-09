@@ -11,9 +11,13 @@ internal sealed class RedisAuthenticationThrottleStore(IConnectionMultiplexer re
         local deadline = tonumber(redis.call('HGET', KEYS[1], 'until') or '0')
         local failures = tonumber(redis.call('HGET', KEYS[1], 'failures') or '0')
         if deadline <= now then failures = 0; redis.call('HDEL', KEYS[1], 'failures', 'until') end
-        if failures >= tonumber(ARGV[2]) then return {2, deadline - now} end
         local lease = tonumber(redis.call('HGET', KEYS[1], 'leaseUntil') or '0')
-        if lease > now then return {1, lease - now} end
+        if lease > now then return {1, lease - now, failures >= tonumber(ARGV[2]) and 1 or 0} end
+        if failures >= tonumber(ARGV[2]) then
+            redis.call('HSET', KEYS[1], 'owner', ARGV[1], 'leaseUntil', now + tonumber(ARGV[3]))
+            redis.call('PEXPIRE', KEYS[1], math.max(tonumber(ARGV[3]), deadline - now))
+            return {2, deadline - now, 1}
+        end
         redis.call('HSET', KEYS[1], 'owner', ARGV[1], 'leaseUntil', now + tonumber(ARGV[3]))
         redis.call('PEXPIRE', KEYS[1], math.max(tonumber(ARGV[3]), deadline - now))
         return {0, 0}
@@ -27,6 +31,13 @@ internal sealed class RedisAuthenticationThrottleStore(IConnectionMultiplexer re
         local failures = tonumber(redis.call('HGET', KEYS[1], 'failures') or '0')
         if deadline <= now then failures = 0 end
         if ARGV[2] == 'Succeeded' then failures = 0 end
+        if ARGV[2] == 'LockedOut' then
+            if failures == 0 then redis.call('DEL', KEYS[1]); return 1 end
+            redis.call('HDEL', KEYS[1], 'owner')
+            redis.call('HSET', KEYS[1], 'leaseUntil', now + tonumber(ARGV[3]))
+            redis.call('PEXPIRE', KEYS[1], math.max(tonumber(ARGV[3]), deadline - now))
+            return 1
+        end
         if ARGV[2] == 'Failed' then
             if failures == 0 then deadline = now + tonumber(ARGV[3]) end
             failures = failures + 1
@@ -45,11 +56,10 @@ internal sealed class RedisAuthenticationThrottleStore(IConnectionMultiplexer re
         if redis.call('INCR', KEYS[1]) == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
         return 0
         """;
-
     public async Task<LoginAdmissionResult> BeginLoginAsync(string key, string owner, int failureLimit, TimeSpan window, TimeSpan lease, CancellationToken ct)
     {
         var result = (RedisResult[])(await EvaluateAsync(Begin, "login:" + key, [owner, failureLimit, (long)lease.TotalMilliseconds], ct))!;
-        return new((LoginAdmission)(int)result[0], TimeSpan.FromMilliseconds((long)result[1]));
+        return new((LoginAdmission)(int)result[0], TimeSpan.FromMilliseconds((long)result[1]), result.Length > 2 && (int)result[2] == 1);
     }
     public async Task<bool> FinishLoginAsync(string key, string owner, LoginAttemptOutcome outcome, TimeSpan window, CancellationToken ct) =>
         (int)await EvaluateAsync(Finish, "login:" + key, [owner, outcome.ToString(), (long)window.TotalMilliseconds], ct) == 1;
