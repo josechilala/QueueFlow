@@ -17,6 +17,7 @@ using QueueFlow.Infrastructure.Notifications;
 using QueueFlow.Infrastructure.Jobs;
 using QueueFlow.Application.Abstractions.Auditing;
 using QueueFlow.Infrastructure.Auditing;
+using QueueFlow.Infrastructure.Billing;
 
 namespace QueueFlow.Infrastructure;
 
@@ -26,6 +27,27 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("QueueFlowDatabase")
             ?? throw new InvalidOperationException("Connection string 'QueueFlowDatabase' is not configured.");
+
+        // Billing is deliberately opt-in and sandbox-only. Production credentials/endpoints are not supported.
+        var asaasEnvironment = configuration["Asaas:Environment"];
+        if (!string.IsNullOrWhiteSpace(asaasEnvironment))
+        {
+            if (!string.Equals(asaasEnvironment, "Sandbox", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Only Asaas Sandbox is supported.");
+            if (string.IsNullOrWhiteSpace(configuration["Asaas:SandboxApiKey"]))
+                throw new InvalidOperationException("Asaas:SandboxApiKey is required when Asaas Sandbox is enabled.");
+            services.AddHttpClient<AsaasSandboxClient>(client =>
+            {
+                client.BaseAddress = new Uri(AsaasSandboxClient.SandboxBaseUrl);
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false
+            })
+            .RemoveAllLoggers();
+        }
 
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
