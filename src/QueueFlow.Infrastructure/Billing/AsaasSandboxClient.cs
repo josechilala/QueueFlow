@@ -18,6 +18,11 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         var key = configuration["Asaas:SandboxApiKey"];
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("Asaas sandbox API key is not configured.");
+        if (http.BaseAddress is null ||
+            !string.Equals(http.BaseAddress.AbsoluteUri, SandboxBaseUrl, StringComparison.Ordinal))
+            throw new InvalidOperationException("Asaas requests must use the fixed sandbox endpoint.");
+        if (Uri.TryCreate(path, UriKind.Absolute, out _) || path.StartsWith("/", StringComparison.Ordinal))
+            throw new ArgumentException("Asaas request path must be relative.", nameof(path));
         using var request = new HttpRequestMessage(method, path);
         request.Headers.TryAddWithoutValidation("access_token", key);
         request.Headers.Accept.ParseAdd("application/json");
