@@ -4,14 +4,13 @@ namespace QueueFlow.Application.Tests.Billing;
 
 public sealed class BillingPlansTests
 {
-    [Theory]
-    [InlineData("professional", 69.90, 796.86)]
-    [InlineData("enterprise", 179.90, 2050.86)]
-    public void CalculatesApprovedPrices(string code, decimal monthly, decimal annual)
+    [Fact]
+    public void CalculatesApprovedPrices()
     {
-        var plan = BillingPlans.Get(code);
-        Assert.Equal(monthly, plan.PriceFor(BillingCycle.Monthly));
-        Assert.Equal(annual, plan.PriceFor(BillingCycle.Yearly));
+        Assert.Equal(69.90m, BillingPlans.Professional.PriceFor(BillingCycle.Monthly));
+        Assert.Equal(796.86m, BillingPlans.Professional.PriceFor(BillingCycle.Yearly));
+        Assert.Equal(179.90m, BillingPlans.Enterprise.PriceFor(BillingCycle.Monthly));
+        Assert.Equal(2050.86m, BillingPlans.Enterprise.PriceFor(BillingCycle.Yearly));
     }
 
     [Theory]
