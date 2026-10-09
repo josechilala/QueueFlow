@@ -1,29 +1,46 @@
 namespace QueueFlow.Application.Features.Billing;
 
-/// <summary>
-/// Billing periods supported by the Asaas subscription API.
-/// Commercial prices are deliberately not hard-coded.
-/// </summary>
+/// <summary>Commercial catalog for sandbox checkout; amounts are in BRL.</summary>
 public enum BillingCycle { Monthly, Yearly }
+public enum BillingPaymentMethod { CreditCard, DebitCard, Pix }
+public enum BillingCollectionMode { RecurringSubscription, OneTimeUpfront }
 
-public enum BillingPaymentMethod { CreditCard, Pix }
-
-public sealed record BillingPlan(string Code, string Name, decimal MonthlyPrice, decimal YearlyPrice)
+public sealed record BillingPlan(string Code, string Name, decimal MonthlyPrice, int? IncludedAttendants)
 {
-    public BillingPlan
-    {
-        if (string.IsNullOrWhiteSpace(Code) || string.IsNullOrWhiteSpace(Name))
-            throw new ArgumentException("Plan code and name are required.");
-        if (MonthlyPrice <= 0 || YearlyPrice <= 0)
-            throw new ArgumentOutOfRangeException(nameof(MonthlyPrice), "Plan prices must be positive.");
-    }
+    public decimal AnnualPrice => decimal.Round(MonthlyPrice * 12m * 0.95m, 2, MidpointRounding.AwayFromZero);
 
     public decimal PriceFor(BillingCycle cycle) => cycle switch
     {
         BillingCycle.Monthly => MonthlyPrice,
-        BillingCycle.Yearly => YearlyPrice,
+        BillingCycle.Yearly => AnnualPrice,
         _ => throw new ArgumentOutOfRangeException(nameof(cycle))
     };
+}
+
+public static class BillingPlans
+{
+    public const decimal AnnualDiscount = 0.05m;
+    public static readonly BillingPlan Professional = new("professional", "Profissional", 69.90m, 3);
+    // Enterprise capacity can be expanded; specific seat pricing remains to be defined.
+    public static readonly BillingPlan Enterprise = new("enterprise", "Empresarial", 179.90m, null);
+
+    public static BillingPlan Get(string code) => code?.Trim().ToLowerInvariant() switch
+    {
+        "professional" => Professional,
+        "enterprise" => Enterprise,
+        _ => throw new ArgumentException("Unknown billing plan.", nameof(code))
+    };
+
+    public static BillingCollectionMode CollectionMode(BillingCycle cycle, BillingPaymentMethod method) =>
+        (cycle, method) switch
+        {
+            (BillingCycle.Monthly, BillingPaymentMethod.CreditCard) => BillingCollectionMode.RecurringSubscription,
+            (BillingCycle.Monthly, BillingPaymentMethod.Pix) => BillingCollectionMode.RecurringSubscription,
+            (BillingCycle.Yearly, BillingPaymentMethod.CreditCard) => BillingCollectionMode.RecurringSubscription,
+            (BillingCycle.Monthly or BillingCycle.Yearly, BillingPaymentMethod.DebitCard) => BillingCollectionMode.OneTimeUpfront,
+            (BillingCycle.Yearly, BillingPaymentMethod.Pix) => BillingCollectionMode.OneTimeUpfront,
+            _ => throw new ArgumentOutOfRangeException(nameof(method))
+        };
 
     public static string AsaasCycle(BillingCycle cycle) => cycle switch
     {
@@ -32,10 +49,10 @@ public sealed record BillingPlan(string Code, string Name, decimal MonthlyPrice,
         _ => throw new ArgumentOutOfRangeException(nameof(cycle))
     };
 
-    public static string AsaasBillingType(BillingPaymentMethod method) => method switch
+    public static string AsaasRecurringBillingType(BillingPaymentMethod method) => method switch
     {
         BillingPaymentMethod.CreditCard => "CREDIT_CARD",
         BillingPaymentMethod.Pix => "PIX",
-        _ => throw new ArgumentOutOfRangeException(nameof(method))
+        _ => throw new ArgumentException("Debit card is not a recurring Asaas subscription billing type.", nameof(method))
     };
 }
