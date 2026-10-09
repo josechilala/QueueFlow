@@ -3,7 +3,7 @@
 ## Approved commercial catalog (BRL)
 | Plan | Monthly | Annual, 5% discount | Attendants |
 |---|---:|---:|---|
-| Profissional | R$ 69,90 | R$ 796,86 upfront | 3 |
+| Profissional | R$ 69,90 | R$ 796,86 upfront | 4 |
 | Empresarial | R$ 179,90 | R$ 2.050,86 upfront | Expandable; seat add-on pricing pending |
 
 Annual prices equal 12 monthly payments less 5%, rounded to cents. Annual Pix and debit must be paid **in full** before service activation; never create twelve installment invoices for these methods. Credit card may use the annual Asaas subscription cycle, charging the full annual amount each year. Annual credit-card installment support is not included.
