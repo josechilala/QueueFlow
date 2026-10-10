@@ -47,6 +47,12 @@ public static class DependencyInjection
                 UseCookies = false
             })
             .RemoveAllLoggers();
+            services.AddScoped<QueueFlow.Application.Features.Billing.IBillingCheckout, BillingCheckoutService>();
+            services.AddScoped<BillingWebhookProcessor>();
+            if (configuration.GetValue<bool>("Asaas:CheckoutEnabled") &&
+                (configuration["Asaas:WebhookToken"]?.Length is not >= 32 ||
+                 configuration["Asaas:WebhookToken"] == configuration["Asaas:SandboxApiKey"]))
+                throw new InvalidOperationException("Checkout requires a distinct webhook token of at least 32 characters.");
         }
 
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));

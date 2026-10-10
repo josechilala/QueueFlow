@@ -16,11 +16,11 @@ Annual prices equal 12 monthly payments less 5%, rounded to cents. Annual Pix an
 - Debit: **one-time payment** only, full monthly or annual amount; debit acceptance depends on the Asaas hosted invoice/checkout product and must be confirmed in sandbox before offering the option in UI. Never send `DEBIT_CARD` as a subscription billing type.
 
 ## Implementation status
-The branch currently has a domain-side price and collection-mode catalog plus an isolated Asaas sandbox transport. Neither is wired to live routes. No operational checkout, debit payment, webhook, migration, tenant state transition, or tests have been completed.
+Sandbox checkout, tenant persistence, authenticated payment webhooks and the billing UI are implemented behind `Asaas:CheckoutEnabled` (false by default). The existing migration has been extended but remains unapplied. Debit is rejected by checkout and is not offered in the UI; the legacy collection-mode catalog does not imply acceptance. See [the implementation audit](billing-implementation-audit.md) for configuration findings, validation results and remaining operational verification.
 
 ## Requirements before enabling
 1. Add tenant-scoped billing persistence, unique payment/provider IDs and migration.
-2. Add authorized checkout, customer mapping, one-time payment API and hosted debit flow; never store PAN/CVV.
+2. Validate authorized checkout, customer references, one-time payment API and hosted credit invoice flow in the dedicated Sandbox environment; never store PAN/CVV. Debit remains disabled.
 3. Validate webhook token, deduplicate events, reconcile with provider, handle retries and out-of-order delivery; only confirmed payment may activate service.
 4. Add Pix QR display/copy-paste, cancellation, delinquency and renewal rules.
 5. Test all sandbox payment paths, annual upfront rules and cross-tenant isolation; run build and tests.

@@ -23,6 +23,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<BillingCharge> BillingCharges => Set<BillingCharge>();
+    public DbSet<BillingWebhookEvent> BillingWebhookEvents => Set<BillingWebhookEvent>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<QueueMetricSnapshot> QueueMetricSnapshots => Set<QueueMetricSnapshot>();
@@ -76,7 +77,14 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureTenant<Subscription>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         modelBuilder.Entity<BillingCharge>(b =>
         {
-            b.ToTable("BillingCharges");
+            b.ToTable("BillingCharges", table =>
+            {
+                table.HasCheckConstraint("CK_BillingCharges_AmountCurrency", "\"Amount\" > 0 AND \"Currency\" = 'BRL'");
+                table.HasCheckConstraint("CK_BillingCharges_Selection", "\"PlanCode\" IN ('professional','enterprise') AND \"Cycle\" IN ('Monthly','Yearly') AND \"PaymentMethod\" IN ('Pix','CreditCard')");
+                table.HasCheckConstraint("CK_BillingCharges_Status", "\"Status\" IN ('Pending','Uncertain','Paid','Cancelled','Refunded') AND (\"Status\" <> 'Paid' OR (\"PaidAt\" IS NOT NULL AND \"AsaasPaymentId\" IS NOT NULL))");
+            });
+            b.HasOne<Organization>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            b.Property<uint>("xmin").IsRowVersion();
             b.HasQueryFilter(x => x.OrganizationId == currentUser.OrganizationId);
             b.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique();
             b.HasIndex(x => x.AsaasPaymentId).IsUnique().HasFilter("\"AsaasPaymentId\" IS NOT NULL");
@@ -88,9 +96,18 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             b.Property(x => x.Currency).HasMaxLength(3).IsRequired();
             b.Property(x => x.IdempotencyKey).HasMaxLength(120).IsRequired();
             b.Property(x => x.AsaasPaymentId).HasMaxLength(120);
+            b.Property(x => x.AsaasCustomerId).HasMaxLength(120);
             b.Property(x => x.AsaasSubscriptionId).HasMaxLength(120);
             b.Property(x => x.Status).HasMaxLength(20).IsRequired();
             b.Property(x => x.Amount).HasPrecision(18, 2);
+        });
+        modelBuilder.Entity<BillingWebhookEvent>(b =>
+        {
+            b.HasIndex(x => x.ProviderEventId).IsUnique();
+            b.Property(x => x.ProviderEventId).HasMaxLength(200);
+            b.Property(x => x.EventType).HasMaxLength(60);
+            b.HasOne<BillingCharge>().WithMany().HasForeignKey(x => x.ChargeId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(x => BillingCharges.Any(charge => charge.Id == x.ChargeId && charge.OrganizationId == currentUser.OrganizationId));
         });
         ConfigureTenant<AuditLog>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         modelBuilder.Entity<AuditLog>().HasIndex(x => new { x.OrganizationId, x.CreatedAt });

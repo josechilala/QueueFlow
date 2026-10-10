@@ -19,6 +19,8 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         var key = configuration["Asaas:SandboxApiKey"];
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("Asaas sandbox API key is not configured.");
+        if (!string.Equals(configuration["Asaas:Environment"], "Sandbox", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Only Asaas Sandbox is supported.");
         if (http.BaseAddress is null ||
             !string.Equals(http.BaseAddress.AbsoluteUri, SandboxBaseUrl, StringComparison.Ordinal))
             throw new InvalidOperationException("Asaas requests must use the fixed sandbox endpoint.");
@@ -31,8 +33,21 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         using var response = await http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"Asaas sandbox request failed ({(int)response.StatusCode}).", null, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Asaas returned an empty response.");
+        var id = result switch
+        {
+            AsaasCustomerResponse customer => customer.Id,
+            AsaasSubscriptionResponse subscription => subscription.Id,
+            AsaasPaymentResponse payment => payment.Id,
+            _ => null
+        };
+        if (result is AsaasCustomerResponse or AsaasSubscriptionResponse or AsaasPaymentResponse)
+        {
+            try { ValidateProviderId(id!); }
+            catch (ArgumentException) { throw new InvalidOperationException("Asaas returned an invalid resource identifier."); }
+        }
+        return result;
     }
 
     public Task<AsaasCustomerResponse> CreateCustomerAsync(string name, string email, string cpfCnpj, string externalReference, CancellationToken ct) =>
@@ -87,6 +102,16 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
             throw new ArgumentException("Invalid provider ID.", nameof(id));
     }
 
+    public Task<AsaasListResponse<AsaasPaymentResponse>> GetSubscriptionPaymentsAsync(string subscriptionId, CancellationToken ct)
+    {
+        ValidateProviderId(subscriptionId);
+        return SendAsync<AsaasListResponse<AsaasPaymentResponse>>(HttpMethod.Get, $"subscriptions/{subscriptionId}/payments?limit=100", null, ct);
+    }
+
+    public Task<AsaasListResponse<AsaasPaymentResponse>> FindPaymentsAsync(string externalReference, CancellationToken ct) =>
+        SendAsync<AsaasListResponse<AsaasPaymentResponse>>(HttpMethod.Get,
+            $"payments?externalReference={Uri.EscapeDataString(externalReference)}&limit=100", null, ct);
+
     public Task<AsaasPixQrCodeResponse> GetPixQrCodeAsync(string paymentId, CancellationToken ct)
     {
         ValidateProviderId(paymentId);
@@ -107,4 +132,12 @@ public sealed record AsaasPaymentResponse(
     [property: JsonPropertyName("status")] string? Status,
     [property: JsonPropertyName("invoiceUrl")] string? InvoiceUrl,
     [property: JsonPropertyName("billingType")] string? BillingType,
-    [property: JsonPropertyName("value")] decimal Value);
+    [property: JsonPropertyName("value")] decimal Value,
+    [property: JsonPropertyName("externalReference")] string? ExternalReference = null,
+    [property: JsonPropertyName("customer")] string? Customer = null,
+    [property: JsonPropertyName("subscription")] string? Subscription = null,
+    [property: JsonPropertyName("deleted")] bool Deleted = false,
+    [property: JsonPropertyName("dueDate")] DateOnly? DueDate = null);
+
+public sealed record AsaasListResponse<T>([property: JsonPropertyName("data")] T[] Data,
+    [property: JsonPropertyName("hasMore")] bool HasMore);

@@ -146,4 +146,23 @@ public sealed class Subscription : AuditableEntity, ITenantEntity
     public string Plan { get; private set; } = "Trial";
     public SubscriptionStatus Status { get; private set; } = SubscriptionStatus.Trial;
     public DateTimeOffset TrialEndsAt { get; private set; }
+    public void ActivateFromConfirmedBilling(string plan, DateTimeOffset now)
+    {
+        if (Status == SubscriptionStatus.Cancelled) return;
+        if (plan is not ("professional" or "enterprise")) throw new DomainException("Unknown billing plan.");
+        Plan = plan;
+        Status = SubscriptionStatus.Active;
+        MarkUpdated(now);
+    }
+    public void MarkBillingPastDue(DateTimeOffset now)
+    {
+        if (Status != SubscriptionStatus.Active) return;
+        Status = SubscriptionStatus.PastDue;
+        MarkUpdated(now);
+    }
+    public void Cancel(DateTimeOffset now)
+    {
+        Status = SubscriptionStatus.Cancelled;
+        MarkUpdated(now);
+    }
 }

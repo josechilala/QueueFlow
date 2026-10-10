@@ -11,6 +11,9 @@ public static class QueueFlowTelemetry
     public static readonly Meter Meter = new(Name);
     public static readonly Counter<long> Calls = Meter.CreateCounter<long>("queueflow.calls", description: "Tickets called for service.");
     public static readonly Counter<long> NotificationFailures = Meter.CreateCounter<long>("queueflow.notification.failures", description: "Notification delivery failures.");
+    public static readonly Counter<long> BillingReservations = Meter.CreateCounter<long>("queueflow.billing.reservations", description: "Durably reserved sandbox checkouts.");
+    public static readonly Counter<long> BillingUncertain = Meter.CreateCounter<long>("queueflow.billing.uncertain", description: "Ambiguous sandbox checkout outcomes requiring reconciliation.");
+    public static readonly Counter<long> BillingEvents = Meter.CreateCounter<long>("queueflow.billing.events", description: "Durably processed sandbox payment events.");
 
     private static long _activeQueues;
     private static long _waitingTickets;

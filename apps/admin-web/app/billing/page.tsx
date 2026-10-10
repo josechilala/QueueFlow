@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { AdminShell } from '../../components/admin-shell';
 import { authFailure, apiUrl } from '../../lib/auth';
 import { getServerSession } from '../../lib/server-session';
+import { BillingCheckout } from '../../components/billing-checkout';
 
 type BillingPlan = {
   code: string;
@@ -39,10 +40,7 @@ export default async function BillingPage() {
       <h1>Assinatura e pagamentos</h1>
       <p className="muted">Consulte os planos disponíveis para sua empresa.</p>
     </div>
-    <section className="notice">
-      <h3>Contratação em preparação</h3>
-      <p>O checkout ainda não está disponível. Nenhuma cobrança será criada nesta tela.</p>
-    </section>
+    {plans && <BillingCheckout plans={plans} />}
     {!plans ? <section className="notice"><p>Não foi possível consultar os planos no momento. Tente novamente quando a API estiver disponível.</p></section> :
       <section className="metric-grid" aria-label="Planos disponíveis">
         {plans.map(plan => <article className="metric-card" key={plan.code}>
@@ -51,7 +49,6 @@ export default async function BillingPage() {
           <strong>{money(plan.monthlyPrice)}</strong>
           <p>Anual: {money(plan.annualPrice)} (desconto de {plan.annualDiscountPercent}%)</p>
           <p>{plan.includedAttendants === null ? 'Capacidade de atendentes expansível' : `${plan.includedAttendants} atendentes incluídos`}</p>
-          <p className="muted">Contratação indisponível durante a integração com o Asaas Sandbox.</p>
         </article>)}
       </section>}
   </AdminShell>;
