@@ -22,6 +22,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<TicketEvent> TicketEvents => Set<TicketEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<BillingCharge> BillingCharges => Set<BillingCharge>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<QueueMetricSnapshot> QueueMetricSnapshots => Set<QueueMetricSnapshot>();
@@ -73,6 +74,24 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureTenant<TicketEvent>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<Notification>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         ConfigureTenant<Subscription>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
+        modelBuilder.Entity<BillingCharge>(b =>
+        {
+            b.ToTable("BillingCharges");
+            b.HasQueryFilter(x => x.OrganizationId == currentUser.OrganizationId);
+            b.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique();
+            b.HasIndex(x => x.AsaasPaymentId).IsUnique().HasFilter("\"AsaasPaymentId\" IS NOT NULL");
+            b.HasIndex(x => x.AsaasSubscriptionId);
+            b.HasIndex(x => new { x.OrganizationId, x.CreatedAt });
+            b.Property(x => x.PlanCode).HasMaxLength(40).IsRequired();
+            b.Property(x => x.Cycle).HasMaxLength(20).IsRequired();
+            b.Property(x => x.PaymentMethod).HasMaxLength(30).IsRequired();
+            b.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+            b.Property(x => x.IdempotencyKey).HasMaxLength(120).IsRequired();
+            b.Property(x => x.AsaasPaymentId).HasMaxLength(120);
+            b.Property(x => x.AsaasSubscriptionId).HasMaxLength(120);
+            b.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            b.Property(x => x.Amount).HasPrecision(18, 2);
+        });
         ConfigureTenant<AuditLog>(modelBuilder, x => x.OrganizationId == currentUser.OrganizationId);
         modelBuilder.Entity<AuditLog>().HasIndex(x => new { x.OrganizationId, x.CreatedAt });
         modelBuilder.Entity<AuditLog>().Property(x => x.Action).HasMaxLength(200);
