@@ -19,6 +19,7 @@ public interface IApplicationDbContext
     DbSet<TicketEvent> TicketEvents { get; }
     DbSet<Notification> Notifications { get; }
     DbSet<Subscription> Subscriptions { get; }
+    DbSet<BillingCharge> BillingCharges { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<OutboxMessage> OutboxMessages { get; }
     DbSet<QueueMetricSnapshot> QueueMetricSnapshots { get; }
