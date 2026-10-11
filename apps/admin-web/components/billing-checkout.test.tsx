@@ -53,3 +53,16 @@ it('shows the annual upfront total and excludes debit from payment options', asy
   expect(container.textContent).toContain('valor integral antecipado');
   expect([...selects[2].options].map(value => value.value)).toEqual(['Pix', 'CreditCard']);
 });
+
+it('lets platform admins inspect payment options without calling tenant checkout endpoints', async () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  await act(async () => { root.render(<BillingCheckout plans={plans} previewOnly />); });
+  const selects = container.querySelectorAll('select');
+  expect([...selects[2].options].map(value => value.value)).toEqual(['Pix', 'CreditCard']);
+  await act(async () => { selects[1].value = 'Yearly'; selects[1].dispatchEvent(new Event('change', { bubbles: true })); submit(); });
+  expect(container.textContent).toContain('796,86');
+  expect(container.querySelector('[type="submit"]')).toBeNull();
+  expect(container.querySelector('[name="cpfCnpj"]')).toBeNull();
+  expect(fetchMock).not.toHaveBeenCalled();
+});

@@ -13,7 +13,7 @@ const labels: Record<string, string> = { Pending: 'Aguardando pagamento', Paid: 
   Uncertain: 'A confirmação do checkout está em análise. Não inicie outra cobrança.',
   Cancelled: 'Cobrança cancelada', Refunded: 'Pagamento devolvido' };
 
-export function BillingCheckout({ plans }: { plans: BillingPlan[] }) {
+export function BillingCheckout({ plans, previewOnly = false }: { plans: BillingPlan[]; previewOnly?: boolean }) {
   const [planCode, setPlanCode] = useState(plans[0]?.code ?? 'professional');
   const [cycle, setCycle] = useState('Monthly');
   const [method, setMethod] = useState('Pix');
@@ -25,16 +25,17 @@ export function BillingCheckout({ plans }: { plans: BillingPlan[] }) {
   const inFlight = useRef(false);
   const plan = plans.find(value => value.code === planCode);
   useEffect(() => {
+    if (previewOnly) return;
     const abort = new AbortController();
     fetch('/api/billing/capabilities', { signal: abort.signal, cache: 'no-store' })
       .then(async response => { if (response.ok) setEnabled((await response.json()).checkoutEnabled === true); })
       .catch(() => {});
     return () => abort.abort();
-  }, []);
+  }, [previewOnly]);
   function reset() { if (!charge) key.current = null; }
   async function start(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!enabled || inFlight.current || charge) return;
+    if (previewOnly || !enabled || inFlight.current || charge) return;
     inFlight.current = true;
     setBusy(true); setError('');
     const form = new FormData(event.currentTarget);
@@ -64,7 +65,8 @@ export function BillingCheckout({ plans }: { plans: BillingPlan[] }) {
   }
   return <section className="notice" aria-label="Contratação de plano">
     <h2>Escolha seu plano</h2>
-    {!enabled && <p>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p>}
+    {previewOnly ? <p>Consulte os valores e as formas de pagamento. A contratação é feita pelo proprietário no painel da empresa.</p> :
+      !enabled && <p>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p>}
     <form onSubmit={start} onChange={reset}>
       <fieldset disabled={busy || !!charge}>
         <label>Plano <select value={planCode} onChange={event => setPlanCode(event.target.value)}>
@@ -80,12 +82,12 @@ export function BillingCheckout({ plans }: { plans: BillingPlan[] }) {
           {cycle === 'Yearly' ? ' por ano, valor integral antecipado.' : ' por mês.'}</p>}
         <p>{method === 'CreditCard' ? 'Informe o cartão somente na página de pagamento do Asaas. O QueueFlow não recebe número ou código de segurança.' :
           cycle === 'Monthly' ? 'Uma cobrança Pix será gerada a cada mês e precisará ser paga por você.' : 'O Pix anual é uma cobrança única. A renovação exige um novo pagamento.'}</p>
-        {enabled && <>
+        {!previewOnly && enabled && <>
           <label>Nome do responsável <input name="customerName" required maxLength={200} autoComplete="name" /></label>
           <label>E-mail <input name="customerEmail" type="email" required maxLength={320} autoComplete="email" /></label>
           <label>CPF ou CNPJ, somente números <input name="cpfCnpj" required pattern="([0-9]{11}|[0-9]{14})" maxLength={14} inputMode="numeric" /></label>
         </>}
-        <button type="submit" disabled={!enabled}>{busy ? 'Processando…' : 'Iniciar pagamento'}</button>
+        {!previewOnly && <button type="submit" disabled={!enabled}>{busy ? 'Processando…' : 'Iniciar pagamento'}</button>}
       </fieldset>
     </form>
     {error && <p role="alert">{error}</p>}
@@ -97,6 +99,6 @@ export function BillingCheckout({ plans }: { plans: BillingPlan[] }) {
         <textarea readOnly aria-label="Pix copia e cola" value={charge.pixPayload} />
         <button type="button" onClick={() => { navigator.clipboard.writeText(charge.pixPayload!).catch(() => setError('Copie o código no campo acima.')); }}>Copiar Pix</button></>}
     </div>}
-    {enabled && <button type="button" disabled={busy} onClick={refresh}>Consultar cobrança</button>}
+    {!previewOnly && enabled && <button type="button" disabled={busy} onClick={refresh}>Consultar cobrança</button>}
   </section>;
 }
