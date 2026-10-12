@@ -18,6 +18,7 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
   const [cycle, setCycle] = useState('Monthly');
   const [method, setMethod] = useState('Pix');
   const [enabled, setEnabled] = useState(false);
+  const [availability, setAvailability] = useState<'loading' | 'ready' | 'disabled' | 'unauthorized' | 'forbidden' | 'unavailable'>('loading');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [charge, setCharge] = useState<Charge | null>(null);
@@ -28,8 +29,19 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
     if (previewOnly) return;
     const abort = new AbortController();
     fetch('/api/billing/capabilities', { signal: abort.signal, cache: 'no-store' })
-      .then(async response => { if (response.ok) setEnabled((await response.json()).checkoutEnabled === true); })
-      .catch(() => {});
+      .then(async response => {
+        if (abort.signal.aborted) return;
+        if (!response.ok) {
+          setAvailability(response.status === 401 ? 'unauthorized' : response.status === 403 ? 'forbidden' : 'unavailable');
+          return;
+        }
+        const body = await response.json();
+        if (abort.signal.aborted) return;
+        if (typeof body.checkoutEnabled !== 'boolean') { setAvailability('unavailable'); return; }
+        setEnabled(body.checkoutEnabled);
+        setAvailability(body.checkoutEnabled ? 'ready' : 'disabled');
+      })
+      .catch(() => { if (!abort.signal.aborted) setAvailability('unavailable'); });
     return () => abort.abort();
   }, [previewOnly]);
   function reset() { if (!charge) key.current = null; }
@@ -66,7 +78,11 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
   return <section className="notice" aria-label="Contratação de plano">
     <h2>Escolha seu plano</h2>
     {previewOnly ? <p>Consulte os valores e as formas de pagamento. A contratação é feita pelo proprietário no painel da empresa.</p> :
-      !enabled && <p>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p>}
+      availability === 'disabled' ? <p>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p> :
+      availability === 'unauthorized' ? <p role="alert">Não foi possível autenticar sua sessão para consultar pagamentos. <a href="/api/auth/refresh?returnTo=/billing">Renovar sessão</a></p> :
+      availability === 'forbidden' ? <p role="alert">Sua conta não tem permissão para gerenciar pagamentos. Entre com a conta do proprietário da empresa.</p> :
+      availability === 'unavailable' ? <p role="alert">Não foi possível consultar a disponibilidade dos pagamentos. Atualize a página para tentar novamente.</p> :
+      availability === 'loading' && <p>Consultando disponibilidade dos pagamentos…</p>}
     <form onSubmit={start} onChange={reset}>
       <fieldset disabled={busy || !!charge}>
         <label>Plano <select value={planCode} onChange={event => setPlanCode(event.target.value)}>

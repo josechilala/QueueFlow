@@ -29,6 +29,21 @@ it('cannot submit while the server has not enabled checkout', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it('offers session recovery on 401 without claiming checkout is disabled', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+  await mount();
+  expect(container.querySelector('a')?.getAttribute('href')).toBe('/api/auth/refresh?returnTo=/billing');
+  expect(container.textContent).not.toContain('Contratação em preparação');
+  expect(container.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled).toBe(true);
+});
+
+it('distinguishes an unavailable API from a disabled checkout', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  await mount();
+  expect(container.textContent).toContain('Não foi possível consultar a disponibilidade');
+  expect(container.textContent).not.toContain('Contratação em preparação');
+});
+
 it('reuses the request key after a lost response and never sends a price or tenant ID', async () => {
   const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ checkoutEnabled: true }))
     .mockRejectedValueOnce(new Error('connection lost'))
