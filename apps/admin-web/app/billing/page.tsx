@@ -3,6 +3,7 @@ import { AdminShell } from '../../components/admin-shell';
 import { authFailure, apiUrl } from '../../lib/auth';
 import { getServerSession } from '../../lib/server-session';
 import { BillingCheckout } from '../../components/billing-checkout';
+import styles from '../../components/billing-checkout.module.css';
 
 type BillingPlan = {
   code: string;
@@ -42,7 +43,7 @@ export default async function BillingPage() {
     </div>
     {plans && <BillingCheckout plans={plans} />}
     {!plans ? <section className="notice"><p>Não foi possível consultar os planos no momento. Tente novamente quando a API estiver disponível.</p></section> :
-      <section className="metric-grid" aria-label="Planos disponíveis">
+      <section className={styles.catalog} aria-label="Planos disponíveis">
         {plans.map(plan => <article className="metric-card" key={plan.code}>
           <h3>{plan.name}</h3>
           <p>Mensal</p>

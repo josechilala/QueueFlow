@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import styles from './billing-checkout.module.css';
 
 export type BillingPlan = {
   code: string; name: string; monthlyPrice: number; annualPrice: number;
@@ -75,16 +76,22 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Falha ao consultar cobrança.'); }
     finally { setBusy(false); }
   }
-  return <section className="notice" aria-label="Contratação de plano">
-    <h2>Escolha seu plano</h2>
-    {previewOnly ? <p>Consulte os valores e as formas de pagamento. A contratação é feita pelo proprietário no painel da empresa.</p> :
-      availability === 'disabled' ? <p>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p> :
-      availability === 'unauthorized' ? <p role="alert">Não foi possível autenticar sua sessão para consultar pagamentos. <a href="/api/auth/refresh?returnTo=/billing">Renovar sessão</a></p> :
-      availability === 'forbidden' ? <p role="alert">Sua conta não tem permissão para gerenciar pagamentos. Entre com a conta do proprietário da empresa.</p> :
-      availability === 'unavailable' ? <p role="alert">Não foi possível consultar a disponibilidade dos pagamentos. Atualize a página para tentar novamente.</p> :
-      availability === 'loading' && <p>Consultando disponibilidade dos pagamentos…</p>}
-    <form onSubmit={start} onChange={reset}>
-      <fieldset disabled={busy || !!charge}>
+  return <section className={`notice ${styles.card}`} aria-label="Contratação de plano">
+    <div className={styles.heading}>
+      <span className="eyebrow">Sua assinatura</span>
+      <h2>Escolha seu plano</h2>
+      <p className="muted">Selecione o plano, a periodicidade e a forma de pagamento para sua empresa.</p>
+    </div>
+    {previewOnly ? <p className={styles.message}>Consulte os valores e as formas de pagamento. A contratação é feita pelo proprietário no painel da empresa.</p> :
+      availability === 'disabled' ? <p className={styles.message}>Contratação em preparação. O checkout permanecerá indisponível até a validação da integração.</p> :
+      availability === 'unauthorized' ? <p className="form-error" role="alert">Não foi possível autenticar sua sessão para consultar pagamentos. <a href="/api/auth/refresh?returnTo=/billing">Renovar sessão</a></p> :
+      availability === 'forbidden' ? <p className="form-error" role="alert">Sua conta não tem permissão para gerenciar pagamentos. Entre com a conta do proprietário da empresa.</p> :
+      availability === 'unavailable' ? <p className="form-error" role="alert">Não foi possível consultar a disponibilidade dos pagamentos. Atualize a página para tentar novamente.</p> :
+      availability === 'loading' && <p className={styles.message} role="status">Consultando disponibilidade dos pagamentos…</p>}
+    <form className={styles.form} onSubmit={start} onChange={reset} aria-busy={busy}>
+      <fieldset className={styles.fieldset} disabled={busy || !!charge}>
+        <legend className={styles.legend}>Plano e pagamento</legend>
+        <div className={styles.grid}>
         <label>Plano <select value={planCode} onChange={event => setPlanCode(event.target.value)}>
           {plans.map(value => <option key={value.code} value={value.code}>{value.name}</option>)}
         </select></label>
@@ -94,27 +101,35 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
         <label>Pagamento <select value={method} onChange={event => setMethod(event.target.value)}>
           <option value="Pix">Pix</option><option value="CreditCard">Cartão de crédito</option>
         </select></label>
-        {plan && <p>Total: <strong>{money(cycle === 'Monthly' ? plan.monthlyPrice : plan.annualPrice)}</strong>
-          {cycle === 'Yearly' ? ' por ano, valor integral antecipado.' : ' por mês.'}</p>}
-        <p>{method === 'CreditCard' ? 'Informe o cartão somente na página de pagamento do Asaas. O QueueFlow não recebe número ou código de segurança.' :
+        </div>
+        <div className={styles.summary} aria-label="Resumo financeiro">
+          <span className="eyebrow">Total da contratação</span>
+          {plan && <p className={styles.price}><strong>{money(cycle === 'Monthly' ? plan.monthlyPrice : plan.annualPrice)}</strong>
+            <span>{cycle === 'Yearly' ? ' por ano, valor integral antecipado.' : ' por mês.'}</span></p>}
+          <p className={styles.explanation}>{method === 'CreditCard' ? 'Informe o cartão somente na página de pagamento do Asaas. O QueueFlow não recebe número ou código de segurança.' :
           cycle === 'Monthly' ? 'Uma cobrança Pix será gerada a cada mês e precisará ser paga por você.' : 'O Pix anual é uma cobrança única. A renovação exige um novo pagamento.'}</p>
+        </div>
         {!previewOnly && enabled && <>
+          <h3 className={styles.subheading}>Dados do responsável</h3>
+          <div className={styles.grid}>
           <label>Nome do responsável <input name="customerName" required maxLength={200} autoComplete="name" /></label>
           <label>E-mail <input name="customerEmail" type="email" required maxLength={320} autoComplete="email" /></label>
-          <label>CPF ou CNPJ, somente números <input name="cpfCnpj" required pattern="([0-9]{11}|[0-9]{14})" maxLength={14} inputMode="numeric" /></label>
+          <label>CPF ou CNPJ <input name="cpfCnpj" required pattern="([0-9]{11}|[0-9]{14})" maxLength={14} inputMode="numeric" aria-describedby="billing-document-hint" /><span id="billing-document-hint" className={styles.hint}>Somente números, sem pontos ou traços.</span></label>
+          </div>
         </>}
-        {!previewOnly && <button type="submit" disabled={!enabled}>{busy ? 'Processando…' : 'Iniciar pagamento'}</button>}
+        {!previewOnly && <div className={styles.actions}><button type="submit" disabled={!enabled}>{busy ? 'Processando…' : 'Iniciar pagamento'}</button></div>}
       </fieldset>
     </form>
-    {error && <p role="alert">{error}</p>}
-    {charge && <div aria-live="polite">
-      <p>{labels[charge.status] ?? 'Consultando pagamento'} — {money(charge.amount)}</p>
-      {charge.paymentUrl && <a href={charge.paymentUrl} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {charge && <div className={styles.charge} aria-live="polite">
+      <h3 className={styles.subheading}>Sua cobrança</h3>
+      <p className={styles.chargeStatus}>{labels[charge.status] ?? 'Consultando pagamento'} — {money(charge.amount)}</p>
+      {charge.paymentUrl && <a className="secondary-button" href={charge.paymentUrl} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a>}
       {charge.pixEncodedImage && <img src={`data:image/png;base64,${charge.pixEncodedImage}`} width={240} height={240} alt="QR Code para pagamento Pix" />}
       {charge.pixPayload && <><p>Abra seu banco e use o QR Code ou o Pix copia e cola.</p>
         <textarea readOnly aria-label="Pix copia e cola" value={charge.pixPayload} />
-        <button type="button" onClick={() => { navigator.clipboard.writeText(charge.pixPayload!).catch(() => setError('Copie o código no campo acima.')); }}>Copiar Pix</button></>}
+        <button className="secondary" type="button" onClick={() => { navigator.clipboard.writeText(charge.pixPayload!).catch(() => setError('Copie o código no campo acima.')); }}>Copiar Pix</button></>}
     </div>}
-    {!previewOnly && enabled && <button type="button" disabled={busy} onClick={refresh}>Consultar cobrança</button>}
+    {!previewOnly && enabled && <div className={styles.lookup}><button className="secondary" type="button" disabled={busy} onClick={refresh}>Consultar cobrança</button>{busy && <span className="muted" role="status">Processando sua solicitação…</span>}</div>}
   </section>;
 }
