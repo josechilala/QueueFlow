@@ -4,18 +4,20 @@ using QueueFlow.Infrastructure.Persistence;
 
 namespace QueueFlow.Infrastructure.Billing;
 
-public sealed class BillingWebhookProcessor(ApplicationDbContext db, AsaasSandboxClient provider)
+public sealed class BillingWebhookProcessor(ApplicationDbContext db, AsaasSandboxClient provider, AsaasSandboxTenantAccess access)
 {
     public async Task ProcessAsync(string eventId, string eventType, string paymentId, CancellationToken ct)
     {
+        if (access.AllowedTenantId is null) throw new UnauthorizedAccessException("Sandbox tenant is not configured.");
         if (eventType is not ("PAYMENT_CREATED" or "PAYMENT_UPDATED" or "PAYMENT_CONFIRMED" or
             "PAYMENT_RECEIVED" or "PAYMENT_OVERDUE" or "PAYMENT_DELETED" or "PAYMENT_REFUNDED")) return;
         if (await db.BillingWebhookEvents.IgnoreQueryFilters().AnyAsync(x => x.ProviderEventId == eventId, ct)) return;
 
         // IgnoreQueryFilters is confined to this authenticated provider boundary. Tenant is resolved from persisted references.
-        var payment = await provider.GetPaymentAsync(paymentId, ct);
         var candidate = await db.BillingCharges.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(x => x.AsaasPaymentId == paymentId, ct);
+        if (candidate is not null) access.RequireAllowed(candidate.OrganizationId);
+        var payment = await provider.GetPaymentAsync(paymentId, ct);
         if (candidate is null && Guid.TryParseExact(payment.ExternalReference, "N", out var reference))
             candidate = await db.BillingCharges.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(x => x.Id == reference, ct);
         var renewal = false;
@@ -27,11 +29,13 @@ public sealed class BillingWebhookProcessor(ApplicationDbContext db, AsaasSandbo
             renewal = candidate is not null && candidate.AsaasPaymentId is not null;
         }
         if (candidate is null) return; // Charges outside QueueFlow must not affect any tenant.
+        access.RequireAllowed(candidate.OrganizationId);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await BillingCheckoutService.LockTenantAsync(db, candidate.OrganizationId, ct);
         if (await db.BillingWebhookEvents.IgnoreQueryFilters().AnyAsync(x => x.ProviderEventId == eventId, ct)) return;
         var charge = await db.BillingCharges.IgnoreQueryFilters().SingleAsync(x => x.Id == candidate.Id, ct);
+        access.RequireAllowed(charge.OrganizationId);
         // Re-fetch after acquiring the lock: a delayed event cannot overwrite newer provider state.
         payment = await provider.GetPaymentAsync(paymentId, ct);
         if (renewal)
@@ -42,7 +46,7 @@ public sealed class BillingWebhookProcessor(ApplicationDbContext db, AsaasSandbo
                 payment.BillingType != (charge.PaymentMethod == "Pix" ? "PIX" : "CREDIT_CARD"))
                 throw new QueueFlow.Domain.Common.DomainException("Renewal does not match the registered subscription.");
             var existing = await db.BillingCharges.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.AsaasPaymentId == paymentId, ct);
-            if (existing is not null) charge = existing;
+            if (existing is not null) { access.RequireAllowed(existing.OrganizationId); charge = existing; }
             else
             {
                 var renewalCharge = new BillingCharge(Guid.NewGuid(), charge.OrganizationId, charge.PlanCode,

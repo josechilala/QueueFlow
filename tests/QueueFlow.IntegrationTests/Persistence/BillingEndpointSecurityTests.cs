@@ -13,6 +13,61 @@ namespace QueueFlow.IntegrationTests.Persistence;
 
 public sealed class BillingEndpointSecurityTests
 {
+    private static readonly Guid AllowedTenant = Guid.Parse("e98e5f2c-2c52-43de-8c78-f67c30e73588");
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CapabilitiesReflectTenantPermission(bool allowed)
+    {
+        await using var factory = new OfflineFactory(enable: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            factory.Services.GetRequiredService<ITokenService>().CreateAccessToken(Guid.NewGuid(), allowed ? AllowedTenant : Guid.NewGuid(), UserRole.Owner, "owner@example.test"));
+        using var response = await client.GetAsync("/api/v1/billing/capabilities", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal(allowed, body.GetProperty("checkoutEnabled").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    [InlineData("11111111-1111-1111-1111-111111111111")]
+    public async Task DisallowedTenantCannotCheckoutOrReadCharges(string? configuredTenant)
+    {
+        await using var factory = new OfflineFactory(enable: true, allowedTenant: configuredTenant);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            factory.Services.GetRequiredService<ITokenService>().CreateAccessToken(Guid.NewGuid(), AllowedTenant, UserRole.Owner, "owner@example.test"));
+        using var capabilities = await client.GetAsync("/api/v1/billing/capabilities", TestContext.Current.CancellationToken);
+        var body = await capabilities.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.False(body.GetProperty("checkoutEnabled").GetBoolean());
+        using var checkout = await client.PostAsJsonAsync("/api/v1/billing/checkout", new
+        {
+            planCode = "professional", cycle = "Monthly", paymentMethod = "Pix", idempotencyKey = "test-key-123",
+            customerName = "Sandbox", customerEmail = "owner@example.test", cpfCnpj = "12345678901"
+        }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, checkout.StatusCode);
+        using var charge = await client.GetAsync($"/api/v1/billing/charges/{Guid.NewGuid()}", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, charge.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("invalid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task InvalidTenantConfigurationRejectsWebhookBeforeProcessing(string? configuredTenant)
+    {
+        await using var factory = new OfflineFactory(enable: true, allowedTenant: configuredTenant);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("asaas-access-token", "offline-webhook-token-of-at-least-32-characters");
+        using var response = await client.PostAsJsonAsync("/api/v1/billing/webhooks/asaas", new { id = "event", @event = "PAYMENT_RECEIVED", payment = new { id = "pay_test" } }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
     [Theory]
     [InlineData(null, HttpStatusCode.Unauthorized)]
     [InlineData(UserRole.Admin, HttpStatusCode.Forbidden)]
@@ -65,7 +120,7 @@ public sealed class BillingEndpointSecurityTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private sealed class OfflineFactory(bool enable = false) : WebApplicationFactory<Program>
+    private sealed class OfflineFactory(bool enable = false, string? allowedTenant = "e98e5f2c-2c52-43de-8c78-f67c30e73588") : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -73,6 +128,7 @@ public sealed class BillingEndpointSecurityTests
             builder.UseSetting("Authentication:JwtKey", "offline-billing-tests-jwt-key-of-at-least-32-characters");
             builder.UseSetting("ConnectionStrings:QueueFlowDatabase", "Host=127.0.0.1;Port=1;Database=model_only;Username=model_only;Password=model_only;Timeout=1");
             builder.UseSetting("Asaas:Environment", "Sandbox");
+            builder.UseSetting("Asaas:SandboxAllowedTenantId", allowedTenant ?? "");
             builder.UseSetting("Asaas:SandboxApiKey", "fake-key-never-sent");
             builder.UseSetting("Asaas:WebhookToken", "offline-webhook-token-of-at-least-32-characters");
             builder.UseSetting("Asaas:CheckoutEnabled", enable.ToString());

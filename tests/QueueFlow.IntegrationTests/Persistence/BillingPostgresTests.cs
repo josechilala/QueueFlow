@@ -18,6 +18,27 @@ public sealed class BillingPostgresTests
     private static BillingCheckoutRequest Request(string key = "concurrent-key") =>
         new("professional", "Yearly", "Pix", key, "Sandbox owner", "owner@example.test", "12345678901");
 
+    [Theory]
+    [InlineData("pay_test")]
+    [InlineData("pay_unregistered")]
+    public async Task WebhookCannotSettleChargeForAnotherTenant(string paymentId)
+    {
+        await using var schema = await TestSchema.CreateAsync();
+        using var handler = new ProviderStub();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri(AsaasSandboxClient.SandboxBaseUrl) };
+        var provider = Provider(http);
+        await using (var owner = schema.Context(schema.TenantA))
+            await new BillingCheckoutService(owner, new Identity(schema.TenantA), provider, Access(schema.TenantA)).StartAsync(Request(), Ct);
+        handler.Status = "RECEIVED";
+        await using (var webhook = schema.Context(null))
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new BillingWebhookProcessor(webhook, provider, Access(schema.TenantB))
+                .ProcessAsync("event-disallowed", "PAYMENT_RECEIVED", paymentId, Ct));
+        await using var check = schema.Context(schema.TenantA);
+        Assert.Equal("Pending", (await check.BillingCharges.SingleAsync(Ct)).Status);
+        Assert.Equal(SubscriptionStatus.Trial, (await check.Subscriptions.SingleAsync(Ct)).Status);
+        Assert.Empty(await check.BillingWebhookEvents.IgnoreQueryFilters().ToListAsync(Ct));
+    }
+
     [Fact]
     public async Task ConcurrentSameKeyCreatesOnlyOneProviderPayment()
     {
@@ -28,7 +49,7 @@ public sealed class BillingPostgresTests
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
         {
             await using var db = schema.Context(schema.TenantA);
-            return await new BillingCheckoutService(db, new Identity(schema.TenantA), provider).StartAsync(Request(), Ct);
+            return await new BillingCheckoutService(db, new Identity(schema.TenantA), provider, Access(schema.TenantA)).StartAsync(Request(), Ct);
         }));
         Assert.Single(results.Select(x => x.Id).Distinct());
         Assert.Equal(1, handler.PaymentCreates);
@@ -44,7 +65,7 @@ public sealed class BillingPostgresTests
         using var handler = new ProviderStub { LoseCreateResponse = true };
         using var http = new HttpClient(handler) { BaseAddress = new Uri(AsaasSandboxClient.SandboxBaseUrl) };
         await using var db = schema.Context(schema.TenantA);
-        var service = new BillingCheckoutService(db, new Identity(schema.TenantA), Provider(http));
+        var service = new BillingCheckoutService(db, new Identity(schema.TenantA), Provider(http), Access(schema.TenantA));
         var first = await service.StartAsync(Request(), Ct);
         var retry = await service.StartAsync(Request(), Ct);
         Assert.Equal("Uncertain", first.Status);
@@ -77,11 +98,11 @@ public sealed class BillingPostgresTests
         using var http = new HttpClient(handler) { BaseAddress = new Uri(AsaasSandboxClient.SandboxBaseUrl) };
         var provider = Provider(http);
         await using (var owner = schema.Context(schema.TenantA))
-            await new BillingCheckoutService(owner, new Identity(schema.TenantA), provider).StartAsync(Request(), Ct);
+            await new BillingCheckoutService(owner, new Identity(schema.TenantA), provider, Access(schema.TenantA)).StartAsync(Request(), Ct);
         handler.Status = "RECEIVED";
         await using (var webhook = schema.Context(null))
         {
-            var processor = new BillingWebhookProcessor(webhook, provider);
+            var processor = new BillingWebhookProcessor(webhook, provider, Access(schema.TenantA));
             await processor.ProcessAsync("event-received", "PAYMENT_RECEIVED", "pay_test", Ct);
             await processor.ProcessAsync("event-received", "PAYMENT_RECEIVED", "pay_test", Ct);
             // An older pending notification is reconciled against current confirmed state.
@@ -98,7 +119,7 @@ public sealed class BillingPostgresTests
         handler.Status = "REFUNDED";
         await using (var webhook = schema.Context(null))
         {
-            var processor = new BillingWebhookProcessor(webhook, provider);
+            var processor = new BillingWebhookProcessor(webhook, provider, Access(schema.TenantA));
             await processor.ProcessAsync("event-refunded", "PAYMENT_REFUNDED", "pay_test", Ct);
             await processor.ProcessAsync("event-delayed-confirmed", "PAYMENT_CONFIRMED", "pay_test", Ct);
         }
@@ -139,6 +160,8 @@ public sealed class BillingPostgresTests
         }
         private static HttpResponseMessage Reply(object body) => new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
     }
+
+    private static AsaasSandboxTenantAccess Access(Guid tenant) => new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Asaas:SandboxAllowedTenantId"] = tenant.ToString() }).Build());
 
     private sealed class Identity(Guid? tenant) : ICurrentUser
     {

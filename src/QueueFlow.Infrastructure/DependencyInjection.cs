@@ -29,6 +29,7 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException("Connection string 'QueueFlowDatabase' is not configured.");
 
         // Billing is deliberately opt-in and sandbox-only. Production credentials/endpoints are not supported.
+        services.AddSingleton<AsaasSandboxTenantAccess>();
         var asaasEnvironment = configuration["Asaas:Environment"];
         if (!string.IsNullOrWhiteSpace(asaasEnvironment))
         {

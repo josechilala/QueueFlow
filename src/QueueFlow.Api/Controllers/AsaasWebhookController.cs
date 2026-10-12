@@ -10,14 +10,14 @@ namespace QueueFlow.Api.Controllers;
 [ApiController]
 [Route("api/v1/billing/webhooks/asaas")]
 [AllowAnonymous]
-public sealed class AsaasWebhookController(IServiceProvider services, IConfiguration configuration) : ControllerBase
+public sealed class AsaasWebhookController(IServiceProvider services, IConfiguration configuration, AsaasSandboxTenantAccess access) : ControllerBase
 {
     [HttpPost]
     [RequestSizeLimit(64 * 1024)]
     public async Task<IActionResult> Receive(CancellationToken ct)
     {
         if (!configuration.GetValue<bool>("Asaas:CheckoutEnabled") ||
-            !string.Equals(configuration["Asaas:Environment"], "Sandbox", StringComparison.OrdinalIgnoreCase)) return StatusCode(503);
+            !string.Equals(configuration["Asaas:Environment"], "Sandbox", StringComparison.OrdinalIgnoreCase) || access.AllowedTenantId is null) return StatusCode(503);
         var expected = configuration["Asaas:WebhookToken"];
         var supplied = Request.Headers["asaas-access-token"];
         if (string.IsNullOrWhiteSpace(expected) || expected.Length < 32 || supplied.Count != 1 ||
@@ -40,6 +40,7 @@ public sealed class AsaasWebhookController(IServiceProvider services, IConfigura
                 await services.GetRequiredService<BillingWebhookProcessor>().ProcessAsync(id, eventType, paymentId, ct);
                 return Ok();
             }
+            catch (UnauthorizedAccessException) { return StatusCode(403); }
             catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or
                 JsonException or InvalidOperationException or Microsoft.EntityFrameworkCore.DbUpdateException or QueueFlow.Domain.Common.DomainException)
             { return StatusCode(503); } // Provider retries; no event is acknowledged before durable processing.

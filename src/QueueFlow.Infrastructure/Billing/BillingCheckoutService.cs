@@ -9,13 +9,14 @@ using QueueFlow.Infrastructure.Persistence;
 namespace QueueFlow.Infrastructure.Billing;
 
 /// <summary>Reserve durably before making provider mutations. Ambiguous outcomes require reconciliation.</summary>
-public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser user, AsaasSandboxClient provider)
+public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser user, AsaasSandboxClient provider, AsaasSandboxTenantAccess access)
     : IBillingCheckout
 {
     private Guid Tenant()
     {
         if (!user.IsAuthenticated || user.IdentityType != IdentityType.Tenant || user.Role != UserRole.Owner ||
             user.OrganizationId is not Guid id || id == Guid.Empty) throw new UnauthorizedAccessException();
+        access.RequireAllowed(id);
         return id;
     }
 
