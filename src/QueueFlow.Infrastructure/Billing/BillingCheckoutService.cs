@@ -70,10 +70,10 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
                     BillingPlans.AsaasRecurringBillingType(method), charge.Id.ToString("N"), ct);
                 charge.AttachSubscription(subscription.Id, DateTimeOffset.UtcNow);
                 await db.SaveChangesAsync(ct);
-                var payments = await provider.GetSubscriptionPaymentsAsync(subscription.Id, ct);
-                if (payments.HasMore || payments.Data is not { Length: 1 })
-                    throw new InvalidOperationException("Initial subscription payment is not yet uniquely available.");
-                payment = payments.Data[0];
+                var initialPayment = await FindInitialSubscriptionPaymentAsync(provider, charge, ct);
+                // Subscription creation succeeded. An empty successful read is not an ambiguous creation.
+                if (initialPayment is null) return await ResponseAsync(charge, ct);
+                payment = initialPayment;
             }
             else
             {
@@ -113,7 +113,8 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
     {
         Tenant();
         var charge = await db.BillingCharges.SingleOrDefaultAsync(x => x.Id == id, ct);
-        if (charge is { Status: "Uncertain" }) await ReconcileAsync(charge, ct);
+        if (charge is { Status: "Uncertain" } or { Status: "Pending", AsaasPaymentId: null, AsaasSubscriptionId: not null })
+            await ReconcileAsync(charge, ct);
         return charge is null ? null : await ResponseAsync(charge, ct);
     }
 
@@ -122,12 +123,20 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
         if (charge.AsaasCustomerId is null) return;
         try
         {
-            var matches = charge.AsaasSubscriptionId is not null
-                ? await provider.GetSubscriptionPaymentsAsync(charge.AsaasSubscriptionId, ct)
-                : await provider.FindPaymentsAsync(charge.Id.ToString("N"), ct);
-            if (matches.HasMore || matches.Data is not { Length: 1 }) return;
-            var payment = matches.Data[0];
+            AsaasPaymentResponse? payment;
+            if (charge.AsaasPaymentId is not null)
+                payment = await provider.GetPaymentAsync(charge.AsaasPaymentId, ct);
+            else if (charge.AsaasSubscriptionId is not null)
+                payment = await FindInitialSubscriptionPaymentAsync(provider, charge, ct);
+            else
+            {
+                var matches = await provider.FindPaymentsAsync(charge.Id.ToString("N"), ct);
+                if (matches.HasMore || matches.Data is not { Length: 1 }) return;
+                payment = matches.Data[0];
+            }
+            if (payment is null) return;
             ValidatePayment(charge, payment);
+            if (payment.Deleted) return;
             charge.AttachProviderReferences(payment.Id, payment.Subscription, DateTimeOffset.UtcNow);
             charge.ResolveUncertain(DateTimeOffset.UtcNow);
             await db.SaveChangesAsync(ct);
@@ -135,6 +144,20 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or
             System.Text.Json.JsonException or InvalidOperationException or DomainException or DbUpdateConcurrencyException)
         { /* Reads may recover references but never issue a second provider mutation. */ }
+    }
+
+    internal static async Task<AsaasPaymentResponse?> FindInitialSubscriptionPaymentAsync(
+        AsaasSandboxClient provider, BillingCharge charge, CancellationToken ct)
+    {
+        if (charge.AsaasSubscriptionId is null) throw new InvalidOperationException("Subscription reference is required.");
+        var matches = await provider.GetSubscriptionPaymentsAsync(charge.AsaasSubscriptionId, ct);
+        if (matches.HasMore || matches.Data is null || matches.Data.Length > 1)
+            throw new InvalidOperationException("Initial subscription payment is not uniquely available.");
+        if (matches.Data.Length == 0) return null;
+        var payment = matches.Data[0];
+        ValidatePayment(charge, payment);
+        if (payment.Deleted) throw new DomainException("Initial subscription payment was deleted.");
+        return payment;
     }
 
     private async Task<BillingChargeResponse> ResponseAsync(BillingCharge charge, CancellationToken ct)
@@ -146,6 +169,7 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
             {
                 var payment = await provider.GetPaymentAsync(charge.AsaasPaymentId, ct);
                 ValidatePayment(charge, payment);
+                if (payment.Deleted) throw new DomainException("Provider payment was deleted.");
                 if (Uri.TryCreate(payment.InvoiceUrl, UriKind.Absolute, out var uri) &&
                     uri.Scheme == "https" && uri.Host == "sandbox.asaas.com" && uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo))
                     url = uri.AbsoluteUri;

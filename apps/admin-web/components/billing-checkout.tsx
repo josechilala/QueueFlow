@@ -128,7 +128,7 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
           <label>CPF ou CNPJ <input name="cpfCnpj" required pattern="([0-9]{11}|[0-9]{14})" maxLength={14} inputMode="numeric" aria-describedby="billing-document-hint" /><span id="billing-document-hint" className={styles.hint}>Somente números, sem pontos ou traços.</span></label>
           </div>
         </>}
-        {!previewOnly && <div className={styles.actions}><button type="submit" disabled={!enabled}>{starting ? 'Processando…' : 'Iniciar pagamento'}</button></div>}
+        {!previewOnly && <div className={styles.actions}><button type="submit" disabled={!enabled || starting || refreshing || blocksCheckout}>{starting ? 'Processando…' : 'Iniciar pagamento'}</button></div>}
       </fieldset>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
