@@ -49,7 +49,12 @@ public sealed partial class AsaasSandboxClient(HttpClient http, IConfiguration c
             using var response = await http.SendAsync(request, ct);
             status = response.StatusCode;
             if (!response.IsSuccessStatusCode)
+            {
+                if (method == HttpMethod.Post && response.StatusCode is
+                    System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
+                    throw new AsaasCreationRejectedException(response.StatusCode);
                 throw new HttpRequestException($"Asaas sandbox request failed ({(int)response.StatusCode}).", null, response.StatusCode);
+            }
             var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
                 ?? throw new InvalidOperationException("Asaas returned an empty response.");
             var id = result switch

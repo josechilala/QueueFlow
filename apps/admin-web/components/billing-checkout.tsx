@@ -20,11 +20,14 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
   const [method, setMethod] = useState('Pix');
   const [enabled, setEnabled] = useState(false);
   const [availability, setAvailability] = useState<'loading' | 'ready' | 'disabled' | 'unauthorized' | 'forbidden' | 'unavailable'>('loading');
-  const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [charge, setCharge] = useState<Charge | null>(null);
   const key = useRef<string | null>(null);
   const inFlight = useRef(false);
+  const lookupInFlight = useRef(false);
+  const blocksCheckout = !!charge && charge.status !== 'Cancelled';
   const plan = plans.find(value => value.code === planCode);
   useEffect(() => {
     if (previewOnly) return;
@@ -45,12 +48,14 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
       .catch(() => { if (!abort.signal.aborted) setAvailability('unavailable'); });
     return () => abort.abort();
   }, [previewOnly]);
-  function reset() { if (!charge) key.current = null; }
+  useEffect(() => {
+    if (enabled && localStorage.getItem('queueflow.billing.charge')) void refresh();
+  }, [enabled]);
   async function start(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (previewOnly || !enabled || inFlight.current || charge) return;
+    if (previewOnly || !enabled || inFlight.current || lookupInFlight.current || blocksCheckout) return;
     inFlight.current = true;
-    setBusy(true); setError('');
+    setStarting(true); setError('');
     const form = new FormData(event.currentTarget);
     key.current ??= crypto.randomUUID();
     try {
@@ -60,21 +65,27 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
       if (!response.ok) throw new Error(response.status === 409 ? 'Existe um checkout em andamento. Resolva a cobrança anterior antes de tentar novamente.' :
         'Não foi possível iniciar o checkout. Tente novamente com os mesmos dados.');
       const result = await response.json() as Charge;
-      setCharge(result);
+      acceptCharge(result);
       localStorage.setItem('queueflow.billing.charge', result.id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Falha ao iniciar checkout.'); }
-    finally { inFlight.current = false; setBusy(false); }
+    finally { inFlight.current = false; setStarting(false); }
+  }
+  function acceptCharge(result: Charge) {
+    setCharge(result);
+    if (result.status === 'Cancelled') key.current = null;
   }
   async function refresh() {
+    if (lookupInFlight.current || inFlight.current) return;
     const id = charge?.id ?? localStorage.getItem('queueflow.billing.charge');
     if (!id || !/^[0-9a-f-]{36}$/i.test(id)) { setError('Nenhuma cobrança salva neste navegador.'); return; }
-    setBusy(true); setError('');
+    lookupInFlight.current = true;
+    setRefreshing(true); setError('');
     try {
       const response = await fetch(`/api/billing/charges/${id}`, { cache: 'no-store' });
       if (!response.ok) throw new Error('Não foi possível consultar a cobrança nesta empresa.');
-      setCharge(await response.json() as Charge);
+      acceptCharge(await response.json() as Charge);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Falha ao consultar cobrança.'); }
-    finally { setBusy(false); }
+    finally { lookupInFlight.current = false; setRefreshing(false); }
   }
   return <section className={`notice ${styles.card}`} aria-label="Contratação de plano">
     <div className={styles.heading}>
@@ -88,8 +99,8 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
       availability === 'forbidden' ? <p className="form-error" role="alert">Sua conta não tem permissão para gerenciar pagamentos. Entre com a conta do proprietário da empresa.</p> :
       availability === 'unavailable' ? <p className="form-error" role="alert">Não foi possível consultar a disponibilidade dos pagamentos. Atualize a página para tentar novamente.</p> :
       availability === 'loading' && <p className={styles.message} role="status">Consultando disponibilidade dos pagamentos…</p>}
-    <form className={styles.form} onSubmit={start} onChange={reset} aria-busy={busy}>
-      <fieldset className={styles.fieldset} disabled={busy || !!charge}>
+    <form className={styles.form} onSubmit={start} aria-busy={starting}>
+      <fieldset className={styles.fieldset} disabled={starting || refreshing || blocksCheckout}>
         <legend className={styles.legend}>Plano e pagamento</legend>
         <div className={styles.grid}>
         <label>Plano <select value={planCode} onChange={event => setPlanCode(event.target.value)}>
@@ -117,7 +128,7 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
           <label>CPF ou CNPJ <input name="cpfCnpj" required pattern="([0-9]{11}|[0-9]{14})" maxLength={14} inputMode="numeric" aria-describedby="billing-document-hint" /><span id="billing-document-hint" className={styles.hint}>Somente números, sem pontos ou traços.</span></label>
           </div>
         </>}
-        {!previewOnly && <div className={styles.actions}><button type="submit" disabled={!enabled}>{busy ? 'Processando…' : 'Iniciar pagamento'}</button></div>}
+        {!previewOnly && <div className={styles.actions}><button type="submit" disabled={!enabled}>{starting ? 'Processando…' : 'Iniciar pagamento'}</button></div>}
       </fieldset>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -130,6 +141,6 @@ export function BillingCheckout({ plans, previewOnly = false }: { plans: Billing
         <textarea readOnly aria-label="Pix copia e cola" value={charge.pixPayload} />
         <button className="secondary" type="button" onClick={() => { navigator.clipboard.writeText(charge.pixPayload!).catch(() => setError('Copie o código no campo acima.')); }}>Copiar Pix</button></>}
     </div>}
-    {!previewOnly && enabled && <div className={styles.lookup}><button className="secondary" type="button" disabled={busy} onClick={refresh}>Consultar cobrança</button>{busy && <span className="muted" role="status">Processando sua solicitação…</span>}</div>}
+    {!previewOnly && enabled && <div className={styles.lookup}><button className="secondary" type="button" disabled={starting || refreshing} onClick={refresh}>Consultar cobrança</button>{refreshing && <span className="muted" role="status">Processando sua solicitação…</span>}</div>}
   </section>;
 }

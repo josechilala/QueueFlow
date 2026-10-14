@@ -5,11 +5,12 @@ using QueueFlow.Domain.Common;
 using QueueFlow.Domain.Entities;
 using QueueFlow.Domain.Enums;
 using QueueFlow.Infrastructure.Persistence;
+using QueueFlow.Application.Abstractions.Auditing;
 
 namespace QueueFlow.Infrastructure.Billing;
 
 /// <summary>Reserve durably before making provider mutations. Ambiguous outcomes require reconciliation.</summary>
-public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser user, AsaasSandboxClient provider, AsaasSandboxTenantAccess access)
+public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser user, AsaasSandboxClient provider, AsaasSandboxTenantAccess access, IAuditWriter? audit = null)
     : IBillingCheckout
 {
     private Guid Tenant()
@@ -88,13 +89,25 @@ public sealed class BillingCheckoutService(ApplicationDbContext db, ICurrentUser
             System.Text.Json.JsonException or InvalidOperationException or DomainException or DbUpdateException)
         {
             // Use a separate short budget even if the HTTP client disconnected. Never retry POST.
-            charge.MarkUncertain(DateTimeOffset.UtcNow);
-            QueueFlow.Application.Observability.QueueFlowTelemetry.BillingUncertain.Add(1);
+            if (IsDefinitiveRejection(ex, charge))
+            {
+                charge.Cancel(DateTimeOffset.UtcNow);
+                audit?.Write("BillingCheckoutRejected", "BillingCharge", charge.Id,
+                    new { Status = "Cancelled", HttpStatus = (int?)((HttpRequestException)ex).StatusCode });
+            }
+            else
+            {
+                charge.MarkUncertain(DateTimeOffset.UtcNow);
+                QueueFlow.Application.Observability.QueueFlowTelemetry.BillingUncertain.Add(1);
+            }
             using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await db.SaveChangesAsync(recovery.Token);
             return new(charge.Id, charge.PlanCode, charge.Cycle, charge.PaymentMethod, charge.Amount, charge.Currency, charge.Status);
         }
     }
+
+    internal static bool IsDefinitiveRejection(Exception error, BillingCharge charge) =>
+        error is AsaasCreationRejectedException && charge.AsaasSubscriptionId is null && charge.AsaasPaymentId is null;
 
     public async Task<BillingChargeResponse?> GetAsync(Guid id, CancellationToken ct)
     {

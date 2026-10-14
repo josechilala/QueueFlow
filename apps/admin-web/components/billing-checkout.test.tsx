@@ -21,6 +21,47 @@ const fill = () => {
   container.querySelector<HTMLInputElement>('[name="cpfCnpj"]')!.value = '12345678901';
 };
 
+it('refreshes Uncertain to Cancelled with independent loading and a new key for the next PIX', async () => {
+  const id = '93985839-3250-4085-b587-03e29186568b';
+  let finishLookup!: (value: Response) => void;
+  const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ checkoutEnabled: true }))
+    .mockResolvedValueOnce(Response.json({ id, status: 'Uncertain', amount: 69.9, currency: 'BRL' }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => { finishLookup = resolve; }))
+    .mockResolvedValueOnce(Response.json({ id: '11111111-1111-1111-1111-111111111111', status: 'Pending',
+      amount: 69.9, currency: 'BRL', pixPayload: 'test-copy-paste', pixEncodedImage: 'dGVzdA==' }));
+  vi.stubGlobal('fetch', fetchMock); await mount(); fill();
+  await act(async () => { submit(); });
+  const firstKey = JSON.parse(fetchMock.mock.calls[1][1].body).idempotencyKey;
+  const lookup = [...container.querySelectorAll('button')].find(button => button.textContent === 'Consultar cobrança')!;
+  await act(async () => { lookup.click(); });
+  expect(container.querySelector('[type="submit"]')!.textContent).toBe('Iniciar pagamento');
+  expect(lookup.disabled).toBe(true);
+  expect(fetchMock.mock.calls[2][0]).toBe(`/api/billing/charges/${id}`);
+  expect(fetchMock.mock.calls[2][1]).not.toHaveProperty('body');
+  await act(async () => { finishLookup(Response.json({ id, status: 'Cancelled', amount: 69.9, currency: 'BRL' })); });
+  expect(container.textContent).toContain('Cobrança cancelada');
+  expect(container.textContent).not.toContain('Não inicie outra cobrança');
+  expect(container.querySelector('fieldset')!.disabled).toBe(false);
+  await act(async () => { submit(); });
+  expect(JSON.parse(fetchMock.mock.calls[3][1].body).idempotencyKey).not.toBe(firstKey);
+  expect(container.querySelector('img')!.getAttribute('src')).toBe('data:image/png;base64,dGVzdA==');
+  expect(container.querySelector('textarea')!.value).toBe('test-copy-paste');
+  expect(container.textContent).toContain('Aguardando pagamento');
+  expect(container.textContent).toContain('69,90');
+});
+
+it('reloads a saved cancelled reservation from the server without creating a checkout', async () => {
+  const id = '93985839-3250-4085-b587-03e29186568b';
+  localStorage.setItem('queueflow.billing.charge', id);
+  const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ checkoutEnabled: true }))
+    .mockResolvedValueOnce(Response.json({ id, status: 'Cancelled', amount: 69.9, currency: 'BRL' }));
+  vi.stubGlobal('fetch', fetchMock); await mount();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock.mock.calls[1][0]).toBe(`/api/billing/charges/${id}`);
+  expect(container.textContent).toContain('Cobrança cancelada');
+  expect(container.querySelector('fieldset')!.disabled).toBe(false);
+});
+
 it('cannot submit while the server has not enabled checkout', async () => {
   const fetchMock = vi.fn().mockResolvedValue(Response.json({ checkoutEnabled: false }));
   vi.stubGlobal('fetch', fetchMock); await mount();
