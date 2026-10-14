@@ -3,13 +3,17 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
+using System.Diagnostics;
 
 namespace QueueFlow.Infrastructure.Billing;
 
 /// <summary>
 /// Sandbox-only transport. Does not activate subscriptions or persist card data.
 /// </summary>
-public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configuration)
+public sealed partial class AsaasSandboxClient(HttpClient http, IConfiguration configuration,
+    ILogger<AsaasSandboxClient>? logger = null, IHttpContextAccessor? contextAccessor = null)
 {
     public const string SandboxBaseUrl = "https://api-sandbox.asaas.com/v3/";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -27,28 +31,55 @@ public sealed class AsaasSandboxClient(HttpClient http, IConfiguration configura
         if (Uri.TryCreate(path, UriKind.Absolute, out _) || path.StartsWith('/'))
             throw new ArgumentException("Asaas request path must be relative.", nameof(path));
         using var request = new HttpRequestMessage(method, path);
+        request.Headers.UserAgent.ParseAdd("QueueFlow/1.0");
         request.Headers.TryAddWithoutValidation("access_token", key);
         request.Headers.Accept.ParseAdd("application/json");
         if (payload is not null) request.Content = JsonContent.Create(payload, options: JsonOptions);
-        using var response = await http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Asaas sandbox request failed ({(int)response.StatusCode}).", null, response.StatusCode);
-        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
-            ?? throw new InvalidOperationException("Asaas returned an empty response.");
-        var id = result switch
+        var started = Stopwatch.GetTimestamp();
+        System.Net.HttpStatusCode? status = null;
+        // Fixed operation names exclude provider IDs, query parameters and customer data.
+        var operation = method == HttpMethod.Post ? path switch
         {
-            AsaasCustomerResponse customer => customer.Id,
-            AsaasSubscriptionResponse subscription => subscription.Id,
-            AsaasPaymentResponse payment => payment.Id,
-            _ => null
-        };
-        if (result is AsaasCustomerResponse or AsaasSubscriptionResponse or AsaasPaymentResponse)
+            "customers" => "CreateCustomer", "subscriptions" => "CreateSubscription",
+            "payments" => "CreatePayment", _ => "Unknown"
+        } : path.EndsWith("/pixQrCode", StringComparison.Ordinal) ? "GetPixQrCode" :
+            path.StartsWith("subscriptions/", StringComparison.Ordinal) ? "ReadSubscription" : "ReadPayment";
+        try
         {
-            try { ValidateProviderId(id!); }
-            catch (ArgumentException) { throw new InvalidOperationException("Asaas returned an invalid resource identifier."); }
+            using var response = await http.SendAsync(request, ct);
+            status = response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"Asaas sandbox request failed ({(int)response.StatusCode}).", null, response.StatusCode);
+            var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
+                ?? throw new InvalidOperationException("Asaas returned an empty response.");
+            var id = result switch
+            {
+                AsaasCustomerResponse customer => customer.Id,
+                AsaasSubscriptionResponse subscription => subscription.Id,
+                AsaasPaymentResponse payment => payment.Id,
+                _ => null
+            };
+            if (result is AsaasCustomerResponse or AsaasSubscriptionResponse or AsaasPaymentResponse)
+            {
+                try { ValidateProviderId(id!); }
+                catch (ArgumentException) { throw new InvalidOperationException("Asaas returned an invalid resource identifier."); }
+            }
+            return result;
         }
-        return result;
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException)
+        {
+            // Never pass the exception itself: messages and response bodies may contain sensitive data.
+            if (logger is not null) LogFailure(logger,
+                operation, status is null ? null : (int?)status,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.GetType().Name,
+                contextAccessor?.HttpContext?.TraceIdentifier ?? Activity.Current?.TraceId.ToString());
+            throw;
+        }
     }
+
+    [LoggerMessage(LogLevel.Warning, "Asaas sandbox operation failed. Operation: {Operation} HttpStatus: {HttpStatus} DurationMs: {DurationMs} ExceptionType: {ExceptionType} CorrelationId: {CorrelationId}")]
+    private static partial void LogFailure(ILogger logger, string operation, int? httpStatus,
+        double durationMs, string exceptionType, string? correlationId);
 
     public Task<AsaasCustomerResponse> CreateCustomerAsync(string name, string email, string cpfCnpj, string externalReference, CancellationToken ct) =>
         SendAsync<AsaasCustomerResponse>(HttpMethod.Post, "customers",
