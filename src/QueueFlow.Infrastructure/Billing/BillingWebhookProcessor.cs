@@ -103,8 +103,12 @@ public sealed class BillingWebhookProcessor(ApplicationDbContext db, AsaasSandbo
 
         db.BillingWebhookEvents.Add(new BillingWebhookEvent(eventId, charge.Id, eventType, now));
         await db.SaveChangesAsync(ct);
-        if (transaction is not null) await transaction.CommitAsync(ct);
-        QueueFlow.Application.Observability.QueueFlowTelemetry.BillingEvents.Add(1);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+            QueueFlow.Application.Observability.QueueFlowTelemetry.ObserveBilling(() =>
+                QueueFlow.Application.Observability.QueueFlowTelemetry.BillingEvents.Add(1));
+        }
         return BillingWebhookOutcome.Processed;
     }
 }

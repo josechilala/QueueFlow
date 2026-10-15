@@ -63,6 +63,10 @@ public static class DependencyInjection
                 throw new InvalidOperationException("Checkout requires a distinct webhook token of at least 32 characters.");
         }
 
+        if (!string.Equals(asaasEnvironment, "Sandbox", StringComparison.OrdinalIgnoreCase) ||
+            !configuration.GetValue<bool>("Asaas:CheckoutEnabled"))
+            services.AddHostedService<BillingInboxWorkerDisabledReporter>();
+
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<ITicketOperations, PostgresTicketOperations>();

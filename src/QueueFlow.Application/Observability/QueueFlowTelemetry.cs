@@ -14,6 +14,19 @@ public static class QueueFlowTelemetry
     public static readonly Counter<long> BillingReservations = Meter.CreateCounter<long>("queueflow.billing.reservations", description: "Durably reserved sandbox checkouts.");
     public static readonly Counter<long> BillingUncertain = Meter.CreateCounter<long>("queueflow.billing.uncertain", description: "Ambiguous sandbox checkout outcomes requiring reconciliation.");
     public static readonly Counter<long> BillingEvents = Meter.CreateCounter<long>("queueflow.billing.events", description: "Durably processed sandbox payment events.");
+    public static readonly Counter<long> BillingInboxOutcomes = Meter.CreateCounter<long>("queueflow.billing.inbox.outcomes", description: "Inbox outcomes acknowledged after commit; not payment confirmations.");
+    public static readonly Counter<long> BillingInboxRetries = Meter.CreateCounter<long>("queueflow.billing.inbox.retries", description: "Durably scheduled inbox retries.");
+    public static readonly Counter<long> BillingInboxFailures = Meter.CreateCounter<long>("queueflow.billing.inbox.failures", description: "Sanitized inbox failures by stage and kind.");
+    public static readonly Histogram<double> BillingInboxDuration = Meter.CreateHistogram<double>("queueflow.billing.inbox.duration", unit: "ms", description: "Committed inbox attempt duration.");
+
+    // Listener/logger failures must never affect a transaction or prevent the next poll.
+    public static void ObserveBilling(Action observation)
+    {
+        try { observation(); }
+        catch (Exception) { /* Best-effort telemetry is not a financial dependency. */ }
+    }
+
+    public static void RecordBillingPollSuccess() => ObserveBilling(() => RecordJobSuccess("billing_inbox"));
 
     private static long _activeQueues;
     private static long _waitingTickets;
