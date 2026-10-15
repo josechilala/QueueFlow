@@ -24,6 +24,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<BillingCharge> BillingCharges => Set<BillingCharge>();
     public DbSet<BillingWebhookEvent> BillingWebhookEvents => Set<BillingWebhookEvent>();
+    public DbSet<BillingWebhookInboxEntry> BillingWebhookInbox => Set<BillingWebhookInboxEntry>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<QueueMetricSnapshot> QueueMetricSnapshots => Set<QueueMetricSnapshot>();
@@ -100,6 +101,21 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             b.Property(x => x.AsaasSubscriptionId).HasMaxLength(120);
             b.Property(x => x.Status).HasMaxLength(20).IsRequired();
             b.Property(x => x.Amount).HasPrecision(18, 2);
+        });
+        modelBuilder.Entity<BillingWebhookInboxEntry>(b =>
+        {
+            b.ToTable("BillingWebhookInbox", table =>
+            {
+                table.HasCheckConstraint("CK_BillingWebhookInbox_Status", "\"Status\" IN ('Pending','Processed','Ignored','Review')");
+                table.HasCheckConstraint("CK_BillingWebhookInbox_Attempts", "\"Attempts\" >= 0 AND \"Attempts\" <= 12");
+            });
+            b.HasIndex(x => x.ProviderEventId).IsUnique();
+            b.HasIndex(x => new { x.Status, x.NextAttemptAt });
+            b.Property(x => x.ProviderEventId).HasMaxLength(200).IsRequired();
+            b.Property(x => x.EventType).HasMaxLength(60).IsRequired();
+            b.Property(x => x.PaymentId).HasMaxLength(100);
+            b.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            b.Property(x => x.LastErrorCode).HasMaxLength(80);
         });
         modelBuilder.Entity<BillingWebhookEvent>(b =>
         {

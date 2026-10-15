@@ -4,13 +4,14 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QueueFlow.Infrastructure.Billing;
+using QueueFlow.Application.Features.Billing;
 
 namespace QueueFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/billing/webhooks/asaas")]
 [AllowAnonymous]
-public sealed class AsaasWebhookController(IServiceProvider services, IConfiguration configuration, AsaasSandboxTenantAccess access) : ControllerBase
+public sealed class AsaasWebhookController(IBillingWebhookInbox inbox, IConfiguration configuration, AsaasSandboxTenantAccess access) : ControllerBase
 {
     [HttpPost]
     [RequestSizeLimit(64 * 1024)]
@@ -32,17 +33,24 @@ public sealed class AsaasWebhookController(IServiceProvider services, IConfigura
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !Read(root, "id", 200, out var id) ||
                 !Read(root, "event", 60, out var eventType)) return BadRequest();
-            if (!eventType.StartsWith("PAYMENT_", StringComparison.Ordinal)) return Ok();
-            if (!root.TryGetProperty("payment", out var payment) || payment.ValueKind != JsonValueKind.Object ||
-                !Read(payment, "id", 100, out var paymentId)) return BadRequest();
+            string? paymentId = null;
+            if (eventType.StartsWith("PAYMENT_", StringComparison.Ordinal))
+            {
+                if (!root.TryGetProperty("payment", out var payment) || payment.ValueKind != JsonValueKind.Object ||
+                    !Read(payment, "id", 100, out paymentId) ||
+                    !paymentId.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) return BadRequest();
+            }
             try
             {
-                await services.GetRequiredService<BillingWebhookProcessor>().ProcessAsync(id, eventType, paymentId, ct);
+                await inbox.AcceptAsync(new(id, eventType, paymentId), ct);
                 return Ok();
             }
             catch (UnauthorizedAccessException) { return StatusCode(403); }
+            catch (QueueFlow.Application.Common.ConflictException) { return Conflict(); }
+            catch (ArgumentException) { return BadRequest(); }
             catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or
-                JsonException or InvalidOperationException or Microsoft.EntityFrameworkCore.DbUpdateException or QueueFlow.Domain.Common.DomainException)
+                JsonException or InvalidOperationException or System.Data.Common.DbException or
+                Microsoft.EntityFrameworkCore.DbUpdateException or QueueFlow.Domain.Common.DomainException)
             { return StatusCode(503); } // Provider retries; no event is acknowledged before durable processing.
         }
     }

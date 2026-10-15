@@ -120,7 +120,62 @@ public sealed class BillingEndpointSecurityTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private sealed class OfflineFactory(bool enable = false, string? allowedTenant = "e98e5f2c-2c52-43de-8c78-f67c30e73588") : WebApplicationFactory<Program>
+    [Theory]
+    [InlineData("pay/invalid")]
+    [InlineData("pay?invalid")]
+    [InlineData("pay invalid")]
+    public async Task WebhookRejectsInvalidProviderIdBeforeDatabaseOrProviderAccess(string paymentId)
+    {
+        await using var factory = new OfflineFactory(enable: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("asaas-access-token", "offline-webhook-token-of-at-least-32-characters");
+        using var response = await client.PostAsJsonAsync("/api/v1/billing/webhooks/asaas",
+            new { id = "evt_invalid", @event = "PAYMENT_RECEIVED", payment = new { id = paymentId } }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("wrong-token")]
+    [InlineData("duplicate")]
+    public async Task WebhookRejectsIncorrectOrMultipleTokens(string scenario)
+    {
+        await using var factory = new OfflineFactory(enable: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("asaas-access-token", scenario == "duplicate"
+            ? "offline-webhook-token-of-at-least-32-characters" : scenario);
+        if (scenario == "duplicate")
+            client.DefaultRequestHeaders.Add("asaas-access-token", "offline-webhook-token-of-at-least-32-characters");
+        using var response = await client.PostAsJsonAsync("/api/v1/billing/webhooks/asaas",
+            new { id = "evt_invalid", @event = "PAYMENT_RECEIVED", payment = new { id = "pay_test" } }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("{broken")]
+    [InlineData("[]")]
+    [InlineData("{\"id\":\"evt_invalid\",\"event\":\"PAYMENT_CONFIRMED\"}")]
+    public async Task WebhookRejectsMalformedPayload(string payload)
+    {
+        await using var factory = new OfflineFactory(enable: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("asaas-access-token", "offline-webhook-token-of-at-least-32-characters");
+        using var body = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/api/v1/billing/webhooks/asaas", body, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WebhookDoesNotAcknowledgeWhenDurableStorageIsUnavailable()
+    {
+        await using var factory = new OfflineFactory(enable: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("asaas-access-token", "offline-webhook-token-of-at-least-32-characters");
+        using var response = await client.PostAsJsonAsync("/api/v1/billing/webhooks/asaas",
+            new { id = "evt_storage_unavailable", @event = "PAYMENT_RECEIVED", payment = new { id = "pay_test" } }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    internal sealed class OfflineFactory(bool enable = false, string? allowedTenant = "e98e5f2c-2c52-43de-8c78-f67c30e73588") : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

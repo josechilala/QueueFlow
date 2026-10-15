@@ -19,6 +19,52 @@ public sealed class BillingPostgresTests
         new("professional", "Yearly", "Pix", key, "Sandbox owner", "owner@example.test", "12345678901");
 
     [Theory]
+    [InlineData("PAYMENT_RECEIVED", "RECEIVED")]
+    [InlineData("PAYMENT_CONFIRMED", "CONFIRMED")]
+    public async Task ExistingUncertainSubscriptionIsSettledUsingOnlyReads(string eventType, string status)
+    {
+        await using var schema = await TestSchema.CreateAsync();
+        var charge = new BillingCharge(Guid.NewGuid(), schema.TenantA, "professional", "Monthly", "Pix",
+            69.90m, "existing-recurring-charge", DateTimeOffset.UtcNow);
+        charge.AttachCustomer("cus_test", DateTimeOffset.UtcNow);
+        charge.AttachSubscription("sub_test", DateTimeOffset.UtcNow);
+        charge.MarkUncertain(DateTimeOffset.UtcNow);
+        await using (var seed = schema.Context(schema.TenantA))
+        {
+            seed.BillingCharges.Add(charge);
+            await seed.SaveChangesAsync(Ct);
+        }
+        using var handler = new ProviderStub { Recurring = true, Status = status };
+        using var http = new HttpClient(handler) { BaseAddress = new Uri(AsaasSandboxClient.SandboxBaseUrl) };
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
+        {
+            await using var db = schema.Context(null);
+            await new BillingWebhookProcessor(db, Provider(http), Access(schema.TenantA))
+                .ProcessAsync("evt_recurring", eventType, "pay_test", Ct);
+        }));
+        await using (var db = schema.Context(null))
+        {
+            var processor = new BillingWebhookProcessor(db, Provider(http), Access(schema.TenantA));
+            await processor.ProcessAsync("evt_recurring", eventType, "pay_test", Ct);
+            await processor.ProcessAsync("evt_recurring", eventType, "pay_test", Ct);
+            await processor.ProcessAsync("evt_delayed", "PAYMENT_CREATED", "pay_test", Ct);
+        }
+        await using var check = schema.Context(schema.TenantA);
+        var saved = await check.BillingCharges.SingleAsync(Ct);
+        Assert.Equal(charge.Id, saved.Id);
+        Assert.Equal("Paid", saved.Status);
+        Assert.Equal("pay_test", saved.AsaasPaymentId);
+        Assert.Equal("sub_test", saved.AsaasSubscriptionId);
+        var subscription = await check.Subscriptions.SingleAsync(Ct);
+        Assert.Equal(schema.TenantA, subscription.OrganizationId);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+        Assert.Equal(schema.TrialEnd, subscription.TrialEndsAt);
+        Assert.Equal(2, await check.BillingWebhookEvents.CountAsync(Ct));
+        Assert.Equal(0, handler.CustomerCreates);
+        Assert.Equal(0, handler.PaymentCreates);
+    }
+
+    [Theory]
     [InlineData("pay_test")]
     [InlineData("pay_unregistered")]
     public async Task WebhookCannotSettleChargeForAnotherTenant(string paymentId)
@@ -139,9 +185,11 @@ public sealed class BillingPostgresTests
         public int PaymentCreates => _payments;
         public string Status { get; set; } = "PENDING";
         public bool LoseCreateResponse { get; init; }
+        public bool Recurring { get; init; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (Recurring) Assert.Equal(HttpMethod.Get, request.Method);
             if (request.Method == HttpMethod.Post && path.EndsWith("/customers", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _customers);
@@ -155,7 +203,9 @@ public sealed class BillingPostgresTests
                 if (LoseCreateResponse) throw new HttpRequestException("Simulated response loss after provider acceptance.");
             }
             if (path.EndsWith("/pixQrCode", StringComparison.Ordinal)) return Reply(new { payload = "test-pix", encodedImage = "" });
-            return Reply(new { id = "pay_test", status = Status, customer = "cus_test", value = 796.86m,
+            var returnedId = request.Method == HttpMethod.Get ? path.Split('/')[^1] : "pay_test";
+            return Reply(new { id = returnedId, status = Status, customer = "cus_test", value = Recurring ? 69.90m : 796.86m,
+                subscription = Recurring ? "sub_test" : null,
                 billingType = "PIX", externalReference = _reference, invoiceUrl = "https://sandbox.asaas.com/i/test" });
         }
         private static HttpResponseMessage Reply(object body) => new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
@@ -172,7 +222,7 @@ public sealed class BillingPostgresTests
         public bool IsAuthenticated => tenant.HasValue;
     }
 
-    private sealed class TestSchema(string connection, string schema) : IAsyncDisposable
+    internal sealed class TestSchema(string connection, string schema) : IAsyncDisposable
     {
         public Guid TenantA { get; } = Guid.NewGuid();
         public Guid TenantB { get; } = Guid.NewGuid();

@@ -375,6 +375,62 @@ namespace QueueFlow.Infrastructure.Persistence.Migrations
                     b.ToTable("BillingWebhookEvents");
                 });
 
+            modelBuilder.Entity("QueueFlow.Domain.Entities.BillingWebhookInboxEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PaymentId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ProviderEventId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderEventId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("BillingWebhookInbox", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BillingWebhookInbox_Attempts", "\"Attempts\" >= 0 AND \"Attempts\" <= 12");
+
+                            t.HasCheckConstraint("CK_BillingWebhookInbox_Status", "\"Status\" IN ('Pending','Processed','Ignored','Review')");
+                        });
+                });
+
             modelBuilder.Entity("QueueFlow.Domain.Entities.Branch", b =>
                 {
                     b.Property<Guid>("Id")

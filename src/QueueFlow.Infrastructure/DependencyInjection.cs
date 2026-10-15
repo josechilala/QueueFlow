@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using QueueFlow.Application.Features.Auth;
+using QueueFlow.Application.Features.Billing;
 using StackExchange.Redis;
 using Microsoft.Extensions.DependencyInjection;
 using QueueFlow.Application.Abstractions.Clock;
@@ -30,6 +31,9 @@ public static class DependencyInjection
 
         // Billing is deliberately opt-in and sandbox-only. Production credentials/endpoints are not supported.
         services.AddSingleton<AsaasSandboxTenantAccess>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IBillingWebhookInboxStore, PostgresBillingWebhookInbox>();
+        services.AddScoped<IBillingWebhookInbox, ReceiveBillingWebhook>();
         var asaasEnvironment = configuration["Asaas:Environment"];
         if (!string.IsNullOrWhiteSpace(asaasEnvironment))
         {
@@ -50,6 +54,9 @@ public static class DependencyInjection
             .RemoveAllLoggers();
             services.AddScoped<QueueFlow.Application.Features.Billing.IBillingCheckout, BillingCheckoutService>();
             services.AddScoped<BillingWebhookProcessor>();
+            services.AddScoped<IBillingWebhookProcessor>(p => p.GetRequiredService<BillingWebhookProcessor>());
+            services.AddScoped<IBillingWebhookDispatcher, BillingWebhookInboxProcessor>();
+            if (configuration.GetValue<bool>("Asaas:CheckoutEnabled")) services.AddHostedService<BillingWebhookWorker>();
             if (configuration.GetValue<bool>("Asaas:CheckoutEnabled") &&
                 (configuration["Asaas:WebhookToken"]?.Length is not >= 32 ||
                  configuration["Asaas:WebhookToken"] == configuration["Asaas:SandboxApiKey"]))
