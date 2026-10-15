@@ -156,8 +156,9 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services
     .AddHealthChecks()
-    .AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"])
-    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
+    // Checks have a three-second internal budget; this is a fallback below Render's five seconds.
+    .AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"], timeout: TimeSpan.FromSeconds(4))
+    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"], timeout: TimeSpan.FromSeconds(4));
 
 var app = builder.Build();
 

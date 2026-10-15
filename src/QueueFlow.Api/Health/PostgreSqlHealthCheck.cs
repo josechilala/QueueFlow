@@ -1,4 +1,3 @@
-using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using QueueFlow.Infrastructure.Persistence;
@@ -13,58 +12,38 @@ internal sealed partial class PostgreSqlHealthCheck(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
-        string? connectionString = null;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
-            connectionString = dbContext.Database.GetConnectionString();
-            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await dbContext.Database.OpenConnectionAsync(budget.Token);
             await dbContext.Database.CloseConnectionAsync();
             return HealthCheckResult.Healthy();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            LogCheckCanceled(logger);
+            throw;
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
+        {
+            LogCheckTimeout(logger);
+            return HealthCheckResult.Unhealthy("PostgreSQL readiness check timed out.");
+        }
         catch (Exception exception)
         {
-            for (Exception? failure = exception; failure is not null; failure = failure.InnerException)
-            {
-                LogConnectionFailure(
-                    logger,
-                    failure.GetType().FullName ?? failure.GetType().Name,
-                    RedactMessage(failure.Message, connectionString),
-                    failure != exception);
-            }
-
-            // Do not attach the original exception: health check infrastructure may log it without redaction.
-            return HealthCheckResult.Unhealthy("PostgreSQL health check failed. See sanitized logs for details.");
+            // Never log provider messages or attach exceptions: both can contain credentials.
+            LogConnectionFailure(logger, exception.GetType().Name);
+            return HealthCheckResult.Unhealthy("PostgreSQL is unavailable.");
         }
     }
 
     [LoggerMessage(Level = LogLevel.Error,
-        Message = "PostgreSQL health check failed. ExceptionType: {ExceptionType}; Message: {ErrorMessage}; IsInnerException: {IsInnerException}")]
-    private static partial void LogConnectionFailure(
-        ILogger logger, string exceptionType, string errorMessage, bool isInnerException);
-
-    private static string RedactMessage(string message, string? connectionString)
-    {
-        if (string.IsNullOrEmpty(connectionString))
-            return "Connection configuration is unavailable; exception message omitted.";
-
-        try
-        {
-            var settings = new DbConnectionStringBuilder { ConnectionString = connectionString };
-            var sanitized = message.Replace(connectionString, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-
-            foreach (var value in settings.Values.Cast<object>()
-                .Select(value => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture))
-                .Where(value => !string.IsNullOrEmpty(value))
-                .OrderByDescending(value => value!.Length))
-            {
-                sanitized = sanitized.Replace(value!, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-            }
-
-            return sanitized;
-        }
-        catch (ArgumentException)
-        {
-            return "Invalid connection configuration; exception message omitted to protect secrets.";
-        }
-    }
+        Message = "PostgreSQL readiness dependency unavailable. ExceptionType: {ExceptionType}")]
+    private static partial void LogConnectionFailure(ILogger logger, string exceptionType);
+    [LoggerMessage(LogLevel.Warning, "PostgreSQL readiness internal timeout exceeded.")]
+    private static partial void LogCheckTimeout(ILogger logger);
+    [LoggerMessage(LogLevel.Information, "PostgreSQL readiness canceled by caller.")]
+    private static partial void LogCheckCanceled(ILogger logger);
 }
