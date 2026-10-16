@@ -34,7 +34,14 @@ internal sealed class PostgresTicketOperations(ApplicationDbContext db, IClock c
 
     public async Task<QueueTicket?> CallNextAsync(Guid organizationId, Guid queueId, Guid counterId, Guid attendantId, CancellationToken ct)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+        // Serialize this attendant across queues/branches and API instances, before selecting a ticket.
+        // ReadCommitted makes the following query see the preceding caller's committed assignment.
+        var attendantKey = $"{organizationId:N}:{attendantId:N}";
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({attendantKey}, 710041906))", ct);
+        if (await db.QueueTickets.IgnoreQueryFilters().AnyAsync(x => x.OrganizationId == organizationId &&
+            x.AttendantUserId == attendantId && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService), ct))
+            return null;
         var now = clock.UtcNow;
         var ticket = await db.QueueTickets.FromSqlInterpolated(PostgresQueueOrdering.Next(organizationId, queueId, now))
             .IgnoreQueryFilters().SingleOrDefaultAsync(ct);

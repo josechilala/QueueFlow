@@ -220,7 +220,13 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         if (!await CanAccessOperationalBranchAsync(branchId!.Value, ct))
             return Result.Failure<TicketDto>(new("ticket.branch_forbidden", "Você não possui acesso à unidade deste ticket."));
         var ticket = await tickets.CallNextAsync(Tenant, queueId, counterId, userId, ct);
-        if (ticket is null) return Result.Failure<TicketDto>(new("ticket.none_waiting", "Não há tickets aguardando nesta fila."));
+        if (ticket is null)
+        {
+            // The transactional guard may reject a caller that passed the initial, advisory check.
+            if (await db.QueueTickets.AnyAsync(x => x.AttendantUserId == userId && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService), ct))
+                return Result.Failure<TicketDto>(new("ticket.current_exists", "Finalize o ticket atual antes de chamar o próximo."));
+            return Result.Failure<TicketDto>(new("ticket.none_waiting", "Não há tickets aguardando nesta fila."));
+        }
         QueueFlowTelemetry.Calls.Add(1);
         var onePersonAhead = await db.QueueTickets.AsNoTracking().Where(x => x.QueueId == queueId && x.Status == TicketStatus.Waiting)
             .OrderByDescending(x => x.Priority).ThenBy(x => x.IssuedAt).ThenBy(x => x.SequenceNumber).Skip(1).FirstOrDefaultAsync(ct);
