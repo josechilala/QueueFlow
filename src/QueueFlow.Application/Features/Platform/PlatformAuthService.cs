@@ -57,6 +57,6 @@ public sealed class PlatformAuthService(IApplicationDbContext db, ITokenService 
         var refresh = tokens.CreateRefreshToken(user.Id, QueueFlow.Domain.Enums.IdentityType.Platform);
         db.PlatformRefreshTokens.Add(new(Guid.NewGuid(), user.Id, tokens.HashToken(refresh), clock.UtcNow.AddDays(30), clock.UtcNow));
         await db.SaveChangesAsync(ct);
-        return Result.Success(new TokenPair(tokens.CreatePlatformAccessToken(user.Id, user.Email), refresh));
+        return Result.Success(new TokenPair(tokens.CreatePlatformAccessToken(user.Id, user.Email, user.UpdatedAt ?? user.CreatedAt), refresh));
     }
 }

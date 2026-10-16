@@ -14,8 +14,9 @@ public interface ICurrentUser
 
 public interface ITokenService
 {
-    string CreateAccessToken(Guid userId, Guid organizationId, UserRole role, string email);
-    string CreatePlatformAccessToken(Guid platformUserId, string email);
+    // Supply the persisted user's UpdatedAt ?? CreatedAt. Unversioned tokens fail access validation.
+    string CreateAccessToken(Guid userId, Guid organizationId, UserRole role, string email, DateTimeOffset? accessVersion = null);
+    string CreatePlatformAccessToken(Guid platformUserId, string email, DateTimeOffset? accessVersion = null);
     string CreateRefreshToken();
     string CreateRefreshToken(Guid userId, IdentityType identityType);
     Guid? GetRefreshRateLimitIdentity(string token, IdentityType identityType);

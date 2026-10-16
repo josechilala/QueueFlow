@@ -39,7 +39,7 @@ public sealed class TicketBranchAuthorizationTests
     [InlineData("other_branch", HttpStatusCode.Forbidden)]
     [InlineData("removed", HttpStatusCode.Forbidden)]
     [InlineData("inactive_branch", HttpStatusCode.Forbidden)]
-    [InlineData("inactive_user", HttpStatusCode.Forbidden)]
+    [InlineData("inactive_user", HttpStatusCode.Unauthorized)]
     [InlineData("wrong_counter", HttpStatusCode.BadRequest)]
     [InlineData("foreign_queue", HttpStatusCode.BadRequest)]
     [InlineData("foreign_counter", HttpStatusCode.BadRequest)]
@@ -256,7 +256,7 @@ public sealed class TicketBranchAuthorizationTests
             var client = factory!.CreateClient();
             if (authenticated)
             {
-                var token = factory.Services.GetRequiredService<ITokenService>().CreateAccessToken(Actor.Id, Tenant, Actor.Role, Actor.Email);
+                var token = factory.Services.GetRequiredService<ITokenService>().CreateAccessToken(Actor.Id, Tenant, Actor.Role, Actor.Email, Actor.UpdatedAt ?? Actor.CreatedAt);
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
             return client;

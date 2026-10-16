@@ -86,8 +86,10 @@ builder.Services.AddScoped<TrialRequestService>();
 builder.Services.AddScoped<PlatformAdministrationService>();
 builder.Services.AddScoped<PlatformBootstrapService>();
 var jwtKey = builder.Configuration["Authentication:JwtKey"] ?? throw new InvalidOperationException("Authentication:JwtKey must be provided through secrets or environment variables.");
+builder.Services.AddScoped<QueueFlow.Api.Authentication.RevocableJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
+    options.EventsType = typeof(QueueFlow.Api.Authentication.RevocableJwtBearerEvents);
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,

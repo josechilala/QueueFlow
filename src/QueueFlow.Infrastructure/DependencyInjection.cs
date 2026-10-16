@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, CurrentUser>();
         services.AddSingleton<ITokenService, JwtTokenService>();
+        services.AddScoped<IAccessTokenValidator, AccessTokenValidator>();
         services.AddSingleton<IPasswordService, PasswordService>();
         services.AddSingleton<IQueueRealtimeNotifier, SignalRQueueRealtimeNotifier>();
         services.AddScoped<INotificationSender, InAppNotificationSender>();

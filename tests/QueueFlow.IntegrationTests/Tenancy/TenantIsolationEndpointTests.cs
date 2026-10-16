@@ -63,7 +63,7 @@ public sealed class TenantIsolationEndpointTests : IClassFixture<QueueFlowApiFac
 
             var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
             using var client = isolated.CreateClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenService.CreateAccessToken(userA.Id, companyA.Id, userA.Role, userA.Email));
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenService.CreateAccessToken(userA.Id, companyA.Id, userA.Role, userA.Email, userA.UpdatedAt ?? userA.CreatedAt));
 
             var identity = await client.GetFromJsonAsync<AuthenticatedUser>("/api/v1/auth/me", ApiJson, TestContext.Current.CancellationToken);
             Assert.NotNull(identity);

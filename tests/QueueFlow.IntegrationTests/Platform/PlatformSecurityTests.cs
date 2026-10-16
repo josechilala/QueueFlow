@@ -139,6 +139,7 @@ public sealed class PlatformTestFactory : WebApplicationFactory<Program>
         builder.UseSetting("RateLimiting:PublicPermitLimit", "1000");
         builder.UseSetting("RateLimiting:AuthPermitLimit", "1000");
         builder.ConfigureServices(services => {
+            services.AddScoped<IAccessTokenValidator, QueueFlow.IntegrationTests.Authentication.PolicyOnlyAccessTokenValidator>();
             foreach (var service in services.Where(service => service.ServiceType == typeof(IHostedService)).ToArray()) services.Remove(service);
         });
     }

@@ -70,7 +70,7 @@ public sealed class OperationalAppointmentEndpointTests(QueueFlowApiFactory fact
 
         try
         {
-            var token = setup.ServiceProvider.GetRequiredService<ITokenService>().CreateAccessToken(attendant.Id, organization.Id, UserRole.Attendant, attendant.Email);
+            var token = setup.ServiceProvider.GetRequiredService<ITokenService>().CreateAccessToken(attendant.Id, organization.Id, UserRole.Attendant, attendant.Email, attendant.UpdatedAt ?? attendant.CreatedAt);
             using var firstClient = AuthenticatedClient(token);
             using var secondClient = AuthenticatedClient(token);
 

@@ -190,7 +190,11 @@ public sealed class BillingEndpointSecurityTests
             builder.UseSetting("Redis:UseBackplane", "false");
             for (var index = 0; index < 4; index++) builder.UseSetting($"Cors:Origins:{index}", "https://billing-test.example");
             builder.UseSetting("RateLimiting:UseRedis", "false");
-            builder.ConfigureServices(services => services.RemoveAll<IHostedService>());
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.AddScoped<IAccessTokenValidator, QueueFlow.IntegrationTests.Authentication.PolicyOnlyAccessTokenValidator>();
+            });
         }
     }
 }

@@ -70,6 +70,6 @@ public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, 
     private async Task<Result<TokenPair>> CreatePairAsync(AppUser user, CancellationToken ct)
     {
         var refresh = tokens.CreateRefreshToken(user.Id, IdentityType.Tenant); db.RefreshTokens.Add(new(Guid.NewGuid(), user.OrganizationId, user.Id, tokens.HashToken(refresh), clock.UtcNow.AddDays(30), clock.UtcNow)); await db.SaveChangesAsync(ct);
-        return Result.Success(new TokenPair(tokens.CreateAccessToken(user.Id, user.OrganizationId, user.Role, user.Email), refresh));
+        return Result.Success(new TokenPair(tokens.CreateAccessToken(user.Id, user.OrganizationId, user.Role, user.Email, user.UpdatedAt ?? user.CreatedAt), refresh));
     }
 }
