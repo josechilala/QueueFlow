@@ -212,9 +212,13 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var userId = currentUser.UserId ?? throw new UnauthorizedAccessException();
         if (await db.QueueTickets.AnyAsync(x => x.AttendantUserId == userId && (x.Status == TicketStatus.Called || x.Status == TicketStatus.InService), ct))
             return Result.Failure<TicketDto>(new("ticket.current_exists", "Finalize o ticket atual antes de chamar o próximo."));
-        var validSelection = await db.Queues.AnyAsync(x => x.Id == queueId && x.IsActive && x.Status == QueueStatus.Open, ct)
-            && await db.QueueCounters.AnyAsync(x => x.Id == counterId && x.IsActive && db.Queues.Any(queue => queue.Id == queueId && queue.BranchId == x.BranchId), ct);
+        var branchId = await db.Queues.Where(x => x.Id == queueId && x.OrganizationId == Tenant && x.IsActive && x.Status == QueueStatus.Open)
+            .Select(x => (Guid?)x.BranchId).SingleOrDefaultAsync(ct);
+        var validSelection = branchId is not null &&
+            await db.QueueCounters.AnyAsync(x => x.Id == counterId && x.OrganizationId == Tenant && x.IsActive && x.BranchId == branchId, ct);
         if (!validSelection) return Result.Failure<TicketDto>(new("ticket.invalid_operation_context", "A fila e o guichê devem estar ativos e pertencer à mesma unidade."));
+        if (!await CanAccessOperationalBranchAsync(branchId!.Value, ct))
+            return Result.Failure<TicketDto>(new("ticket.branch_forbidden", "Você não possui acesso à unidade deste ticket."));
         var ticket = await tickets.CallNextAsync(Tenant, queueId, counterId, userId, ct);
         if (ticket is null) return Result.Failure<TicketDto>(new("ticket.none_waiting", "Não há tickets aguardando nesta fila."));
         QueueFlowTelemetry.Calls.Add(1);
@@ -278,6 +282,8 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         var userId = currentUser.UserId ?? throw new UnauthorizedAccessException();
         var ticket = await db.QueueTickets.SingleOrDefaultAsync(x => x.Id == id && x.AttendantUserId == userId, ct);
         if (ticket is null) return Result.Failure<TicketDto>(new("ticket.not_found", "O ticket não pertence ao atendente atual."));
+        if (!await CanAccessOperationalBranchAsync(ticket.BranchId, ct))
+            return Result.Failure<TicketDto>(new("ticket.branch_forbidden", "Você não possui acesso à unidade deste ticket."));
         transition(ticket);
         db.TicketEvents.Add(new(Guid.NewGuid(), Tenant, ticket.Id, ticket.Status, reason, clock.UtcNow));
         audit?.Write($"ticket.{ticket.Status.ToString().ToLowerInvariant()}", "Ticket", ticket.Id);
@@ -286,6 +292,18 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
         await PublishTicketStateAsync(ticket, eventName ?? EventName(ticket.Status), ct);
         return Result.Success(Map(ticket));
     }
+    private Task<bool> CanAccessOperationalBranchAsync(Guid branchId, CancellationToken ct)
+    {
+        var role = currentUser.Role;
+        if (role is UserRole.Owner or UserRole.Admin or UserRole.Manager) return Task.FromResult(true);
+        if (role != UserRole.Attendant) return Task.FromResult(false);
+
+        return db.Branches.AnyAsync(branch => branch.Id == branchId && branch.OrganizationId == Tenant && branch.IsActive &&
+            db.Users.Any(user => user.Id == currentUser.UserId && user.OrganizationId == Tenant && user.IsActive) &&
+            db.UserBranches.Any(assignment => assignment.UserId == currentUser.UserId &&
+                assignment.OrganizationId == Tenant && assignment.BranchId == branch.Id), ct);
+    }
+
     private async Task CompleteLinkedAppointmentAsync(QueueTicket ticket, CancellationToken ct)
     {
         var appointment = await db.Appointments.SingleOrDefaultAsync(x => x.OrganizationId == ticket.OrganizationId && x.QueueTicketId == ticket.Id, ct);

@@ -13,6 +13,7 @@ public sealed class TicketsController(QueueOperationsService service) : Controll
     [HttpPost("{id:guid}/cancel")] public async Task<IActionResult> Cancel(Guid id, CancelTicketRequest request, CancellationToken ct) => ToActionResult(await service.CancelAsync(id, request.Reason, ct));
     [HttpPost("{id:guid}/no-show")] public async Task<IActionResult> NoShow(Guid id, CancellationToken ct) => ToActionResult(await service.NoShowAsync(id, ct));
     [HttpPost("{id:guid}/recall")] public async Task<IActionResult> Recall(Guid id, CancellationToken ct) => ToActionResult(await service.RecallAsync(id, ct));
-    private IActionResult ToActionResult(Result<TicketDto> result) => result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 400);
+    private IActionResult ToActionResult(Result<TicketDto> result) => result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description,
+        statusCode: result.Error.Code == "ticket.branch_forbidden" ? StatusCodes.Status403Forbidden : StatusCodes.Status400BadRequest);
 }
 public sealed record CancelTicketRequest(string? Reason);

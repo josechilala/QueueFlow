@@ -18,7 +18,8 @@ public sealed class QueuesController(QueueOperationsService service) : Controlle
     [Authorize(Policy = "AdminPanel"), HttpPost("{id:guid}/pause")] public async Task<IActionResult> Pause(Guid id, CancellationToken ct) => ToActionResult(await service.PauseAsync(id, ct));
     [Authorize(Policy = "AdminPanel"), HttpPost("{id:guid}/close")] public async Task<IActionResult> Close(Guid id, CancellationToken ct) => ToActionResult(await service.CloseAsync(id, ct));
     [Authorize(Policy = "AttendantPanel"), HttpPost("{id:guid}/call-next")] public async Task<IActionResult> CallNext(Guid id, CallNextRequest request, CancellationToken ct) => ToActionResult(await service.CallNextAsync(id, request.CounterId, ct));
-    private IActionResult ToActionResult<T>(QueueFlow.Application.Common.Result<T> result) => result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description, statusCode: 400);
+    private IActionResult ToActionResult<T>(QueueFlow.Application.Common.Result<T> result) => result.IsSuccess ? Ok(result.Value) : Problem(result.Error.Description,
+        statusCode: result.Error.Code == "ticket.branch_forbidden" ? StatusCodes.Status403Forbidden : StatusCodes.Status400BadRequest);
 }
 public sealed record CreateQueueRequest(Guid BranchId, Guid ServiceId, string Name, int? Capacity);
 public sealed record CallNextRequest(Guid CounterId);
