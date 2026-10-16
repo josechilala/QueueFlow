@@ -26,7 +26,14 @@ public static class QueueFlowTelemetry
         catch (Exception) { /* Best-effort telemetry is not a financial dependency. */ }
     }
 
-    public static void RecordBillingPollSuccess() => ObserveBilling(() => RecordJobSuccess("billing_inbox"));
+    private const string BillingInboxJob = "billing_inbox";
+
+    public static void RecordBillingPollSuccess() => ObserveBilling(() => RecordJobSuccess(BillingInboxJob));
+
+    public static DateTimeOffset? GetBillingLastSuccessfulPollAtUtc() =>
+        JobLastSuccess.TryGetValue(BillingInboxJob, out var timestamp)
+            ? DateTimeOffset.FromUnixTimeSeconds((long)timestamp)
+            : null;
 
     private static long _activeQueues;
     private static long _waitingTickets;
