@@ -16,20 +16,32 @@ public sealed class AuthService(IApplicationDbContext db, ITokenService tokens, 
     public async Task<Result<TokenPair>> LoginAsync(string email, string password, CancellationToken ct)
     {
         var normalizedEmail = email.Trim().ToLowerInvariant();
-        var matches = await db.Users.IgnoreQueryFilters().Where(x => x.Email == normalizedEmail).Take(2).ToListAsync(ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        // User first, then refresh tokens: security changes use the same lock order.
+        var matches = await db.Users.FromSqlInterpolated($"SELECT * FROM \"Users\" WHERE \"Email\" = {normalizedEmail} FOR UPDATE")
+            .IgnoreQueryFilters().Take(2).ToListAsync(ct);
         var user = matches.Count == 1 ? matches[0] : null;
         var verified = passwords.Verify(user?.PasswordHash, password);
         if (user is null || !user.IsActive || !verified) return Result.Failure<TokenPair>(new("auth.invalid_credentials", "Invalid credentials."));
-        return await CreatePairAsync(user, ct);
+        var result = await CreatePairAsync(user, ct);
+        await transaction.CommitAsync(ct);
+        return result;
     }
     public async Task<Result<TokenPair>> RefreshAsync(string refreshToken, CancellationToken ct)
     {
         await using var transaction = await db.BeginTransactionAsync(ct);
         var hash = tokens.HashToken(refreshToken);
+        // This lookup only identifies the lock owner; token validity is rechecked under the locks.
+        var owner = await db.RefreshTokens.IgnoreQueryFilters().AsNoTracking().Where(x => x.TokenHash == hash)
+            .Select(x => new { x.UserId, x.OrganizationId }).SingleOrDefaultAsync(ct);
+        if (owner is null) return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or expired."));
+        var user = await db.Users.FromSqlInterpolated($"SELECT * FROM \"Users\" WHERE \"Id\" = {owner.UserId} AND \"OrganizationId\" = {owner.OrganizationId} FOR UPDATE")
+            .IgnoreQueryFilters().SingleOrDefaultAsync(ct);
+        if (user is null) return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid."));
         var stored = await db.RefreshTokens.FromSqlInterpolated($"SELECT * FROM \"RefreshTokens\" WHERE \"TokenHash\" = {hash} FOR UPDATE")
             .IgnoreQueryFilters().SingleOrDefaultAsync(ct);
-        if (stored is null || stored.ExpiresAt <= clock.UtcNow) return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or expired."));
-        var user = await db.Users.IgnoreQueryFilters().SingleAsync(x => x.Id == stored.UserId, ct);
+        if (stored is null || stored.UserId != user.Id || stored.OrganizationId != user.OrganizationId || stored.ExpiresAt <= clock.UtcNow)
+            return Result.Failure<TokenPair>(new("auth.invalid_refresh", "Refresh token is invalid or expired."));
         if (!user.IsActive)
         {
             stored.Revoke(clock.UtcNow);

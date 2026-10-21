@@ -55,7 +55,8 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
 
     public async Task<Result<ManagedUserDto>> UpdateAsync(Guid id, UpdateManagedUserRequest request, CancellationToken ct)
     {
-        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        var user = await LockUserAsync(id, ct);
         if (user is null) return Result.Failure<ManagedUserDto>(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
         if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role) || !RolePermissions.CanAssignRole(actor.Value, request.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
@@ -70,12 +71,14 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         await RevokeSessionsAsync(id, ct);
         audit.Write(previousRole == request.Role ? "user.updated" : "user.permission_changed", "User", user.Id, new { PreviousRole = previousRole.ToString(), NewRole = request.Role.ToString(), BranchIds = branchResult.Value });
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return Result.Success(Map(user, branchResult.Value));
     }
 
     public async Task<Result<ManagedUserDto>> SetStatusAsync(Guid id, bool isActive, CancellationToken ct)
     {
-        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        var user = await LockUserAsync(id, ct);
         if (user is null) return Result.Failure<ManagedUserDto>(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
         if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role)) return Result.Failure<ManagedUserDto>(Forbidden);
@@ -84,13 +87,15 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         if (!isActive) await RevokeSessionsAsync(id, ct);
         audit.Write("user.status_changed", "User", user.Id, new { IsActive = isActive });
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         var branches = await db.UserBranches.Where(x => x.UserId == id).Select(x => x.BranchId).ToArrayAsync(ct);
         return Result.Success(Map(user, branches));
     }
 
     public async Task<Result> ResetPasswordAsync(Guid id, string password, CancellationToken ct)
     {
-        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id, ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        var user = await LockUserAsync(id, ct);
         if (user is null) return Result.Failure(new("users.not_found", "User was not found."));
         var actor = currentUser.Role;
         if (actor is null || !RolePermissions.CanManageRole(actor.Value, user.Role)) return Result.Failure(Forbidden);
@@ -99,8 +104,13 @@ public sealed class UserManagementService(IApplicationDbContext db, ICurrentUser
         await RevokeSessionsAsync(id, ct);
         audit.Write("user.password_reset", "User", user.Id);
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return Result.Success();
     }
+
+    // Keep the tenant query filter and acquire this lock before reading/revoking sessions.
+    private Task<AppUser?> LockUserAsync(Guid id, CancellationToken ct) =>
+        db.Users.FromSqlInterpolated($"SELECT * FROM \"Users\" WHERE \"Id\" = {id} AND \"OrganizationId\" = {currentUser.OrganizationId} FOR UPDATE").SingleOrDefaultAsync(ct);
 
     private async Task<Result<Guid[]>> ValidateBranchesAsync(IReadOnlyList<Guid>? ids, UserRole role, CancellationToken ct)
     {

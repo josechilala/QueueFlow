@@ -14,19 +14,27 @@ public sealed class PlatformAuthService(IApplicationDbContext db, ITokenService 
     public async Task<Result<TokenPair>> LoginAsync(string email, string password, CancellationToken ct)
     {
         var normalized = email?.Trim().ToLowerInvariant() ?? string.Empty;
-        var user = await db.PlatformUsers.SingleOrDefaultAsync(x => x.Email == normalized, ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        var user = await db.PlatformUsers.FromSqlInterpolated($"SELECT * FROM \"PlatformUsers\" WHERE \"Email\" = {normalized} FOR UPDATE").SingleOrDefaultAsync(ct);
         var verified = passwords.Verify(user?.PasswordHash, password);
         if (user is null || !user.IsActive || !verified) return Result.Failure<TokenPair>(new("platform.invalid_credentials", "Invalid credentials."));
-        return await CreatePairAsync(user, ct);
+        var result = await CreatePairAsync(user, ct);
+        await transaction.CommitAsync(ct);
+        return result;
     }
 
     public async Task<Result<TokenPair>> RefreshAsync(string refreshToken, CancellationToken ct)
     {
         await using var transaction = await db.BeginTransactionAsync(ct);
         var hash = tokens.HashToken(refreshToken);
+        // Always lock the user before a refresh token, matching the tenant flow.
+        var owner = await db.PlatformRefreshTokens.AsNoTracking().Where(x => x.TokenHash == hash)
+            .Select(x => (Guid?)x.PlatformUserId).SingleOrDefaultAsync(ct);
+        if (owner is null) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
+        var user = await db.PlatformUsers.FromSqlInterpolated($"SELECT * FROM \"PlatformUsers\" WHERE \"Id\" = {owner.Value} FOR UPDATE").SingleOrDefaultAsync(ct);
+        if (user is null) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
         var stored = await db.PlatformRefreshTokens.FromSqlInterpolated($"SELECT * FROM \"PlatformRefreshTokens\" WHERE \"TokenHash\" = {hash} FOR UPDATE").SingleOrDefaultAsync(ct);
-        if (stored is null || stored.ExpiresAt <= clock.UtcNow) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
-        var user = await db.PlatformUsers.SingleAsync(x => x.Id == stored.PlatformUserId, ct);
+        if (stored is null || stored.PlatformUserId != user.Id || stored.ExpiresAt <= clock.UtcNow) return Result.Failure<TokenPair>(new("platform.invalid_refresh", "Refresh token is invalid."));
         if (!user.IsActive)
         {
             stored.Revoke(clock.UtcNow);

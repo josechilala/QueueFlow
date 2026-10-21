@@ -16,7 +16,7 @@ using QueueFlow.Infrastructure.Persistence;
 
 namespace QueueFlow.IntegrationTests.Authentication;
 
-public sealed class JwtRevocationTests
+public sealed partial class JwtRevocationTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -187,7 +187,8 @@ public sealed class JwtRevocationTests
         public AppUser Owner { get; private set; } = null!;
         public AppUser Target { get; private set; } = null!;
         public Branch Branch { get; private set; } = null!;
-        public ApplicationDbContext Context() => new(new DbContextOptionsBuilder<ApplicationDbContext>().UseNpgsql(connection).Options, new SetupIdentity());
+        public ApplicationDbContext Context(ICurrentUser? identity = null, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptors) =>
+            new(new DbContextOptionsBuilder<ApplicationDbContext>().UseNpgsql(connection).AddInterceptors(interceptors).Options, identity ?? new SetupIdentity());
 
         public static async Task<LocalTest> CreateAsync()
         {

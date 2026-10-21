@@ -10,7 +10,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using QueueFlow.Application.Abstractions.Authentication;
+using QueueFlow.Application.Abstractions.Clock;
+using QueueFlow.Application.Abstractions.Persistence;
 using QueueFlow.Application.Abstractions.Realtime;
+using QueueFlow.Application.Features.Queues;
 using QueueFlow.Domain.Entities;
 using QueueFlow.Domain.Enums;
 using QueueFlow.Infrastructure.Persistence;
@@ -166,7 +169,6 @@ public sealed class TicketBranchAuthorizationTests
     [InlineData("complete")]
     [InlineData("no-show")]
     [InlineData("recall")]
-    [InlineData("cancel")]
     public async Task ForeignTenantTicketCannotBeMutated(string action)
     {
         await using var test = await LocalTest.CreateAsync();
@@ -177,9 +179,63 @@ public sealed class TicketBranchAuthorizationTests
         Assert.Equal(before, await test.SnapshotAsync());
     }
 
+    [Fact]
+    public async Task AttendantCannotCancelAnyTicketWithoutSideEffects()
+    {
+        await using var test = await LocalTest.CreateAsync();
+        using var client = test.Client();
+        var before = await test.SnapshotAsync();
+        foreach (var ticketId in new[] { test.Ticket.Id, test.ForeignTicket.Id })
+        {
+            using var response = await client.PostAsJsonAsync($"/api/v1/tickets/{ticketId}/cancel", new { reason = "Denied" }, Ct);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        Assert.Equal(before, await test.SnapshotAsync());
+    }
+
+    [Fact]
+    public async Task DirectAttendantCancellationIsDeniedWithoutTrackedChangesOrWrites()
+    {
+        await using var test = await LocalTest.CreateAsync();
+        var before = await test.SnapshotAsync();
+        await using var scope = test.Services.CreateAsyncScope();
+        await using var db = test.Context();
+        var service = new QueueOperationsService(db, scope.ServiceProvider.GetRequiredService<ITicketOperations>(),
+            new ActorIdentity(test.Actor), scope.ServiceProvider.GetRequiredService<IClock>(), new NoopRealtime());
+        var result = await service.CancelAsync(test.Ticket.Id, "Denied direct call", Ct);
+        Assert.True(result.IsFailure);
+        Assert.Equal("ticket.cancel_forbidden", result.Error.Code);
+        Assert.False(db.ChangeTracker.HasChanges());
+        await db.SaveChangesAsync(Ct);
+        Assert.Equal(before, await test.SnapshotAsync());
+    }
+
+    [Theory]
+    [InlineData(UserRole.Owner)]
+    [InlineData(UserRole.Admin)]
+    [InlineData(UserRole.Manager)]
+    public async Task AdministratorCannotCancelForeignTenantTicketWithoutSideEffects(UserRole role)
+    {
+        await using var test = await LocalTest.CreateAsync(role);
+        var before = await test.SnapshotAsync();
+        using var client = test.Client();
+        using var response = await client.PostAsJsonAsync($"/api/v1/tickets/{test.ForeignTicket.Id}/cancel", new { reason = "Foreign tenant" }, Ct);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(before, await test.SnapshotAsync());
+    }
+
+    private sealed class ActorIdentity(AppUser user) : ICurrentUser
+    {
+        public Guid? UserId => user.Id;
+        public Guid? OrganizationId => user.OrganizationId;
+        public UserRole? Role => user.Role;
+        public bool IsAuthenticated => true;
+    }
+
     private sealed class LocalTest(string connection, string schema) : IAsyncDisposable
     {
         private WebApplicationFactory<Program>? factory;
+        public IServiceProvider Services => factory!.Services;
         private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
         public Guid Tenant { get; } = Guid.NewGuid();
         private Guid ForeignTenant { get; } = Guid.NewGuid();

@@ -275,7 +275,13 @@ public sealed class QueueOperationsService(IApplicationDbContext db, ITicketOper
 
     public Task<Result<TicketDto>> StartAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.Start(clock.UtcNow), null, ct);
     public Task<Result<TicketDto>> CompleteAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.Complete(clock.UtcNow), null, ct);
-    public Task<Result<TicketDto>> CancelAsync(Guid id, string? reason, CancellationToken ct) => TicketTransitionAsync(id, x => x.Cancel(clock.UtcNow), reason, ct);
+    public Task<Result<TicketDto>> CancelAsync(Guid id, string? reason, CancellationToken ct)
+    {
+        if (!currentUser.IsAuthenticated || currentUser.OrganizationId is null ||
+            currentUser.Role is not (UserRole.Owner or UserRole.Admin or UserRole.Manager))
+            return Task.FromResult(Result.Failure<TicketDto>(new("ticket.cancel_forbidden", "Only organization administrators can cancel tickets.")));
+        return TicketTransitionAsync(id, x => x.Cancel(clock.UtcNow), reason, ct);
+    }
     public Task<Result<TicketDto>> NoShowAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.MarkNoShow(clock.UtcNow), null, ct);
     public Task<Result<TicketDto>> RecallAsync(Guid id, CancellationToken ct) => AttendantTicketTransitionAsync(id, x => x.Recall(clock.UtcNow), null, ct, "ticket.recalled");
     private async Task<Result<QueueDto>> TransitionAsync(Guid id, Action<QueueFlowQueue> transition, CancellationToken ct) { var queue = await db.Queues.SingleOrDefaultAsync(x => x.Id == id, ct); if (queue is null) return Result.Failure<QueueDto>(new("queue.not_found", "Queue was not found.")); if (!await db.Services.AnyAsync(x => x.Id == queue.ServiceId && x.OrganizationId == Tenant && x.BranchId == queue.BranchId, ct)
