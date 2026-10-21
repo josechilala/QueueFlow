@@ -11,14 +11,68 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: queueflow_ci_admin_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Disposable runner service only; these identities must match the fixture guards.
+      QUEUEFLOW_Q02_TEST_DATABASE: Host=127.0.0.1;Port=5432;Database=queueflow_q02_test;Username=queueflow_q02_test;Password=queueflow_ci_only;Pooling=false
+      QUEUEFLOW_Q03_TEST_DATABASE: Host=127.0.0.1;Port=5432;Database=queueflow_q03_test;Username=queueflow_q03_test;Password=queueflow_ci_only;Pooling=false
+      QUEUEFLOW_Q04_TEST_DATABASE: Host=127.0.0.1;Port=5432;Database=queueflow_q04_test;Username=queueflow_q04_test;Password=queueflow_ci_only;Pooling=false
     steps:
       - uses: actions/checkout@v4
+      - name: Provision disposable integration databases
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec -i "$POSTGRES_CONTAINER" psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE queueflow_q02_test LOGIN PASSWORD 'queueflow_ci_only';
+          CREATE DATABASE queueflow_q02_test OWNER queueflow_q02_test;
+          CREATE ROLE queueflow_q03_test LOGIN PASSWORD 'queueflow_ci_only';
+          CREATE DATABASE queueflow_q03_test OWNER queueflow_q03_test;
+          CREATE ROLE queueflow_q04_test LOGIN PASSWORD 'queueflow_ci_only';
+          CREATE DATABASE queueflow_q04_test OWNER queueflow_q04_test;
+          SQL
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
-      - run: dotnet test --no-build --configuration Release
+      - name: Run backend tests
+        run: dotnet test --no-build --no-restore --configuration Release --logger "trx;LogFilePrefix=backend" --results-directory TestResults/backend
+      - name: Require Q02 Q03 Q04 tests to pass without skips
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reports = @(Get-ChildItem -LiteralPath TestResults/backend -Filter '*.trx' | ForEach-Object { [xml](Get-Content -LiteralPath $_.FullName -Raw) })
+          if ($reports.Count -eq 0) { throw 'No backend TRX reports were generated.' }
+          $requiredSuites = @(
+            'QueueFlow.IntegrationTests.Queues.TicketBranchAuthorizationTests',
+            'QueueFlow.IntegrationTests.Persistence.AttendantCallConcurrencyTests',
+            'QueueFlow.IntegrationTests.Authentication.JwtRevocationTests'
+          )
+          foreach ($suite in $requiredSuites) {
+            $results = @(
+              foreach ($report in $reports) {
+                $ids = @($report.TestRun.TestDefinitions.UnitTest | Where-Object { $_.TestMethod.className -eq $suite } | ForEach-Object { $_.id })
+                $report.TestRun.Results.UnitTestResult | Where-Object { $_.testId -in $ids }
+              }
+            )
+            if ($results.Count -eq 0) { throw "Required suite was not executed: $suite" }
+            if (@($results | Where-Object { $_.outcome -ne 'Passed' }).Count -gt 0) {
+              throw "Required suite contains failed or skipped tests: $suite"
+            }
+            Write-Host "$suite - $($results.Count) passed"
+          }
       - uses: actions/setup-node@v4
         with:
           node-version: 24
