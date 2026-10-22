@@ -1,13 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Logging;
 using QueueFlow.Application.Abstractions.Persistence;
 using QueueFlow.Domain.Entities;
 using QueueFlow.Domain.Enums;
+using QueueFlow.Infrastructure.Persistence;
+using QueueFlow.IntegrationTests.Fixtures;
 
 namespace QueueFlow.IntegrationTests.Queues;
 
@@ -77,26 +77,42 @@ public sealed class PublicQueueEndpointTests : IClassFixture<PublicQueueApiFacto
     private sealed record IssueTicketResponse(string TicketNumber, string CustomerPublicToken, string Status);
 }
 
-public sealed class PublicQueueApiFactory : WebApplicationFactory<Program>
+public sealed class PublicQueueApiFactory : IsolatedEndpointApiFactory
 {
+    private readonly Guid organizationId = Guid.NewGuid();
+    private readonly Guid branchId = Guid.NewGuid();
+    private readonly Guid queueId = Guid.NewGuid();
+    private readonly Guid serviceId = Guid.NewGuid();
+
+    protected override async Task SeedAsync(ApplicationDbContext db, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var queue = new QueueFlow.Domain.Entities.Queue(queueId, organizationId, branchId, serviceId, "Queue", null, now);
+        queue.Open(now);
+        db.AddRange(new Organization(organizationId, "Public queue test", $"public-{organizationId:N}", "UTC", now),
+            new Branch(branchId, organizationId, "Branch", "UTC", now),
+            new Service(serviceId, organizationId, branchId, "Service", null, "A", 5, now),
+            queue);
+        await db.SaveChangesAsync(ct);
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseSetting("Authentication:JwtKey", "integration-test-key-with-at-least-thirty-two-characters");
-        builder.ConfigureLogging(logging => logging.ClearProviders());
+        base.ConfigureWebHost(builder);
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<ITicketOperations>();
-            services.AddSingleton<ITicketOperations, StubTicketOperations>();
+            services.AddSingleton<ITicketOperations>(new StubTicketOperations(organizationId, branchId, queueId, serviceId));
         });
     }
 
-    private sealed class StubTicketOperations : ITicketOperations
+    private sealed class StubTicketOperations(Guid organizationId, Guid branchId, Guid queueId, Guid serviceId) : ITicketOperations
     {
         public Task<QueueTicket?> IssueAsync(string queuePublicId, TicketPriority priority, CancellationToken cancellationToken)
         {
             QueueTicket? ticket = queuePublicId == "open-queue"
                 ? new QueueTicket(
-                    Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                    Guid.NewGuid(), organizationId, branchId, queueId, serviceId,
                     "A001", 1, priority, "non-enumerable-public-token", DateTimeOffset.UtcNow)
                 : null;
             return Task.FromResult(ticket);

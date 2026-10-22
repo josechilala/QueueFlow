@@ -1,13 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
-using QueueFlow.IntegrationTests.Health;
+using QueueFlow.IntegrationTests.Fixtures;
 
 namespace QueueFlow.IntegrationTests.Security;
 
-public sealed class SecurityEndpointTests : IClassFixture<QueueFlowApiFactory>
+public sealed class SecurityEndpointTests : IClassFixture<SecurityApiFactory>
 {
     private readonly HttpClient _client;
-    public SecurityEndpointTests(QueueFlowApiFactory factory) => _client = factory.CreateClient();
+    public SecurityEndpointTests(SecurityApiFactory factory) => _client = factory.CreateClient();
 
     [Fact]
     public async Task ResponsesContainDefensiveHeaders()
@@ -45,8 +45,17 @@ public sealed class SecurityEndpointTests : IClassFixture<QueueFlowApiFactory>
     [Fact]
     public async Task AuthenticationEndpointsAreRateLimitedPerClient()
     {
-        HttpResponseMessage? last = null;
-        for (var attempt = 0; attempt < 11; attempt++) { last?.Dispose(); last = await _client.PostAsJsonAsync("/api/v1/auth/login", new { email = "invalid@test.local", password = "invalid-password" }, TestContext.Current.CancellationToken); }
-        using (last) Assert.Equal(HttpStatusCode.TooManyRequests, last!.StatusCode);
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            using var response = await _client.PostAsJsonAsync("/api/v1/auth/login", new { email = "invalid@test.local", password = "invalid-password" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+        using var limited = await _client.PostAsJsonAsync("/api/v1/auth/login", new { email = "invalid@test.local", password = "invalid-password" }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.NotNull(limited.Headers.RetryAfter);
+        using var otherIdentity = await _client.PostAsJsonAsync("/api/v1/auth/login", new { email = "other@test.local", password = "invalid-password" }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, otherIdentity.StatusCode);
     }
 }
+
+public sealed class SecurityApiFactory : IsolatedEndpointApiFactory { }
